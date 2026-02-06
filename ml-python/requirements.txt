@@ -1,0 +1,20 @@
+# SmartCity ML Service Dependencies
+# Pinned versions for reproducibility
+
+# Web framework
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+
+# Data processing
+pandas==2.2.0
+numpy==1.26.3
+
+# AI/ML
+groq==0.4.2
+
+# HTTP client
+httpx==0.26.0
+
+# Utilities
+python-dotenv==1.0.0
+pydantic==2.5.3
