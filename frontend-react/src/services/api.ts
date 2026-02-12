@@ -186,15 +186,33 @@ function getMockTraffic(): Traffic {
 
 function generateMockHeatmapPoints(congestionIndex: number): HeatmapPoint[] {
     const points: HeatmapPoint[] = []
-    const center = { lat: 43.2389, lon: 76.8897 }
 
-    for (let i = 0; i < 30; i++) {
-        points.push({
-            lat: center.lat + (Math.random() - 0.5) * 0.1,
-            lon: center.lon + (Math.random() - 0.5) * 0.1,
-            intensity: (congestionIndex / 100) * (0.5 + Math.random() * 0.5),
-        })
-    }
+    // Major Almaty Streets (startLat, startLon, endLat, endLon)
+    const roads = [
+        { name: "Al-Farabi", x1: 43.203, y1: 76.850, x2: 43.218, y2: 76.955 },
+        { name: "Abay", x1: 43.239, y1: 76.850, x2: 43.243, y2: 76.960 },
+        { name: "Dostyk", x1: 43.200, y1: 76.960, x2: 43.260, y2: 76.955 },
+        { name: "Seifullin", x1: 43.220, y1: 76.932, x2: 43.300, y2: 76.935 },
+        { name: "Sain", x1: 43.200, y1: 76.850, x2: 43.280, y2: 76.855 },
+    ]
+
+    roads.forEach(road => {
+        const numPoints = 30 + Math.random() * 20
+        for (let i = 0; i < numPoints; i++) {
+            const t = i / numPoints
+            const lat = road.x1 + t * (road.x2 - road.x1) + (Math.random() - 0.5) * 0.004
+            const lon = road.y1 + t * (road.y2 - road.y1) + (Math.random() - 0.5) * 0.004
+
+            // Intensity varies along the road
+            const intensity = (congestionIndex / 100) * (0.6 + Math.random() * 0.4)
+
+            points.push({
+                lat: lat,
+                lon: lon,
+                intensity: intensity,
+            })
+        }
+    })
 
     return points
 }

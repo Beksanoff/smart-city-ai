@@ -1,13 +1,21 @@
 import { useState } from 'react'
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { Brain, Send, Loader2, Calendar, Thermometer, MessageSquare } from 'lucide-react'
 import { api, type PredictionResponse, type PredictionRequest } from '../../services/api'
+import PredictionChart from './PredictionChart'
 
 function TripPlanner() {
     const [query, setQuery] = useState('')
     const [date, setDate] = useState('')
     const [temperature, setTemperature] = useState<string>('')
     const [result, setResult] = useState<PredictionResponse | null>(null)
+
+    // Получаем текущие данные для сравнения
+    const { data: currentData } = useQuery({
+        queryKey: ['dashboard'],
+        queryFn: api.getDashboard,
+        staleTime: 60000 // Используем кэшированные данные данные 1 минуту
+    })
 
     const mutation = useMutation({
         mutationFn: (request: PredictionRequest) => api.predict(request),
@@ -168,6 +176,14 @@ function TripPlanner() {
                                 />
                             </div>
                         </div>
+
+                        {/* График сравнения */}
+                        <PredictionChart
+                            currentAQI={currentData?.weather.aqi || 0}
+                            predictedAQI={result.aqi_prediction}
+                            currentTraffic={currentData?.traffic.congestion_index || 0}
+                            predictedTraffic={result.traffic_index_prediction}
+                        />
 
                         <div className="p-4 rounded-lg bg-cyber-dark/30 border border-cyber-border">
                             <p className="text-xs text-cyber-muted mb-2">Обоснование</p>

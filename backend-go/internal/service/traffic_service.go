@@ -93,41 +93,42 @@ func (s *TrafficService) getCongestionLevel(index float64) string {
 	}
 }
 
-// generateHeatmapPoints creates clustered points around Almaty center
+// generateHeatmapPoints creates synthetic traffic points along major Almaty roads
 func (s *TrafficService) generateHeatmapPoints(congestionIndex float64) []domain.HeatmapPoint {
-	points := make([]domain.HeatmapPoint, 0, 50)
+	points := make([]domain.HeatmapPoint, 0)
 
-	// Key areas in Almaty with higher traffic
-	hotspots := []struct {
-		lat, lon float64
-		name     string
-		weight   float64
+	// Major Almaty Streets (name, startLat, startLon, endLat, endLon)
+	roads := []struct {
+		name           string
+		x1, y1, x2, y2 float64
 	}{
-		{43.2567, 76.9286, "Al-Farabi/Dostyk", 1.2}, // Major intersection
-		{43.2380, 76.9450, "Mega Center", 1.1},      // Shopping
-		{43.2700, 76.9500, "Alatau", 0.9},           // Residential
-		{43.2220, 76.8510, "Baraholka", 1.3},        // Market
-		{43.2389, 76.8897, "City Center", 1.0},      // Downtown
-		{43.2600, 76.9100, "Medeu Direction", 0.8},  // Mountain road
-		{43.2150, 76.9200, "Airport Road", 1.1},     // Airport
-		{43.2800, 76.8800, "Almaty-1 Station", 0.9}, // Train station
+		{"Al-Farabi", 43.203, 76.850, 43.218, 76.955}, // East-West major
+		{"Abay", 43.239, 76.850, 43.243, 76.960},      // Central East-West
+		{"Dostyk", 43.200, 76.960, 43.260, 76.955},    // North-South
+		{"Seifullin", 43.220, 76.932, 43.300, 76.935}, // North-South
+		{"Sain", 43.200, 76.850, 43.280, 76.855},      // West Ring
 	}
 
-	// Generate points around each hotspot
-	for _, spot := range hotspots {
-		numPoints := 5 + rand.Intn(8)
-		for i := 0; i < numPoints; i++ {
-			// Random offset within ~1km radius
-			latOffset := (rand.Float64() - 0.5) * 0.02
-			lonOffset := (rand.Float64() - 0.5) * 0.02
+	rand.Seed(time.Now().UnixNano())
 
-			intensity := (congestionIndex / 100) * spot.weight * (0.5 + rand.Float64()*0.5)
-			intensity = math.Min(intensity, 1.0)
+	for _, road := range roads {
+		// Generate points along each road
+		numPoints := 40 + rand.Intn(20) // 40-60 points per road
+
+		for i := 0; i < numPoints; i++ {
+			// Linear interpolation with jitter
+			t := float64(i) / float64(numPoints)
+			lat := road.x1 + t*(road.x2-road.x1) + (rand.Float64()-0.5)*0.003
+			lon := road.y1 + t*(road.y2-road.y1) + (rand.Float64()-0.5)*0.003
+
+			// Intensity based on congestion index and road "load"
+			baseIntensity := (congestionIndex / 100.0)
+			intensity := baseIntensity * (0.6 + rand.Float64()*0.4) // Random variation
 
 			points = append(points, domain.HeatmapPoint{
-				Latitude:  spot.lat + latOffset,
-				Longitude: spot.lon + lonOffset,
-				Intensity: math.Round(intensity*100) / 100,
+				Latitude:  lat,
+				Longitude: lon,
+				Intensity: intensity,
 			})
 		}
 	}

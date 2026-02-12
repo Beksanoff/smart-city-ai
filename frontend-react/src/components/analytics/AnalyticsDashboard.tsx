@@ -17,10 +17,23 @@ export default function AnalyticsDashboard() {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <AQIHistoryChart />
-                <TrafficByHourChart />
-                <div className="lg:col-span-2">
+                <div className="space-y-2">
+                    <AQIHistoryChart />
+                    <p className="text-xs text-cyber-muted px-4">
+                        * Показатели выше 100 считаются вредными для чувствительных групп.
+                    </p>
+                </div>
+                <div className="space-y-2">
+                    <TrafficByHourChart />
+                    <p className="text-xs text-cyber-muted px-4">
+                        * Пиковые часы: 08:00-09:00 и 18:00-19:00. Планируйте поездки заранее.
+                    </p>
+                </div>
+                <div className="lg:col-span-2 space-y-2">
                     <CorrelationChart />
+                    <p className="text-xs text-cyber-muted px-4">
+                        * График показывает зависимость концентрации PM2.5 от снижения температуры (инверсия).
+                    </p>
                 </div>
             </div>
         </div>

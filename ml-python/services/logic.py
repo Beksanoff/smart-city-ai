@@ -168,19 +168,22 @@ class PredictionService:
             temp_str = f"{temperature}°C" if temperature else "unknown"
             
             system_prompt = """You are the Almaty City Dispatcher AI. 
-You provide concise, actionable urban condition updates.
-Keep responses under 3 sentences. Be direct and practical.
-Focus on safety recommendations and traffic advice."""
+            You must provide specific, data-driven advice.
+            Mandatory format:
+            1. Current Status: [Temperature]°C, [Weather], [Traffic Level]
+            2. Prediction: When will traffic improve/worsen? (e.g., "Traffic will peak in 30 mins" or "Clearing up by 20:00")
+            3. Recommendation: Why go/not go now? (e.g., "Avoid driving, high smog" or "Good time to travel")
+            Keep it under 4 sentences. Be helpful and local."""
 
             user_prompt = f"""Current conditions in Almaty:
-- Season: {season}
-- Temperature: {temp_str}
-- Predicted AQI: {aqi}
-- Traffic Index: {traffic}%
-
-User query: {query}
-
-Provide a brief, actionable response."""
+            - Season: {season}
+            - Temperature: {temp_str}
+            - Predicted AQI: {aqi}
+            - Traffic Index: {traffic}%
+            
+            User query: {query}
+            
+            Provide the response following the mandatory format."""
 
             response = self.groq_client.chat.completions.create(
                 model="llama-3.1-8b-instant",
@@ -188,7 +191,7 @@ Provide a brief, actionable response."""
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                max_tokens=150,
+                max_tokens=200,
                 temperature=0.7
             )
             
@@ -200,12 +203,14 @@ Provide a brief, actionable response."""
     def _get_fallback_prediction(self, month: int, temperature: Optional[float]) -> str:
         """Fallback prediction when Groq is unavailable"""
         season = self._get_season_name(month)
+        temp_str = f"{temperature}°C" if temperature else "N/A"
+        
         if month in [12, 1, 2]:
-            return f"{season} in Almaty: High smog expected due to heating. Recommend indoor activities and N95 masks outdoors."
+            return f"Stats: {temp_str}, High Smog. Prediction: Traffic peaks at 18:00. Recommendation: Avoid outdoor activities due to heating emissions."
         elif month in [6, 7, 8]:
-            return f"{season} in Almaty: Good air quality. Ideal conditions for outdoor activities. Light traffic expected."
+            return f"Stats: {temp_str}, Clear Sky. Prediction: Low traffic expected all day. Recommendation: Perfect time for travel."
         else:
-            return f"{season} in Almaty: Moderate conditions. Regular commute patterns expected."
+            return f"Stats: {temp_str}, Moderate. Prediction: Traffic clearing by 19:30. Recommendation: Standard commute advised."
     
     def _get_season_name(self, month: int) -> str:
         """Get season name from month"""
