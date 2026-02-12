@@ -13,8 +13,9 @@ import TrafficWidget from './components/dashboard/TrafficWidget'
 import AQIWidget from './components/dashboard/AQIWidget'
 import AlmatyMap from './components/map/AlmatyMap'
 import TripPlanner from './components/dashboard/TripPlanner'
+import AnalyticsDashboard from './components/analytics/AnalyticsDashboard'
 
-type TabType = 'monitor' | 'planner'
+type TabType = 'monitor' | 'planner' | 'analytics'
 
 function App() {
     const [activeTab, setActiveTab] = useState<TabType>('monitor')
@@ -74,6 +75,16 @@ function App() {
                             Мониторинг
                         </button>
                         <button
+                            onClick={() => setActiveTab('analytics')}
+                            className={`flex items-center gap-2 px-6 py-4 border-b-2 transition-all ${activeTab === 'analytics'
+                                ? 'border-pink-500 text-pink-500 tab-active'
+                                : 'border-transparent text-cyber-muted hover:text-cyber-text'
+                                }`}
+                        >
+                            <Activity className="w-4 h-4" />
+                            Аналитика
+                        </button>
+                        <button
                             onClick={() => setActiveTab('planner')}
                             className={`flex items-center gap-2 px-6 py-4 border-b-2 transition-all ${activeTab === 'planner'
                                 ? 'border-cyber-purple text-cyber-purple tab-active'
@@ -89,7 +100,7 @@ function App() {
 
             {/* Основной контент */}
             <main className="container mx-auto px-6 py-8">
-                {activeTab === 'monitor' ? (
+                {activeTab === 'monitor' && (
                     <div className="space-y-8">
                         {/* Сетка виджетов */}
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -125,9 +136,11 @@ function App() {
                             </div>
                         </div>
                     </div>
-                ) : (
-                    <TripPlanner />
                 )}
+
+                {activeTab === 'analytics' && <AnalyticsDashboard />}
+
+                {activeTab === 'planner' && <TripPlanner />}
             </main>
 
             {/* Подвал */}
