@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"log"
 	"sync"
 	"time"
 
@@ -67,6 +68,26 @@ func (s *DashboardService) GetDashboardData(ctx context.Context) (domain.Dashboa
 	}()
 
 	wg.Wait()
+
+	// Log any errors that occurred
+	for _, err := range errs {
+		log.Printf("Dashboard data fetch error: %v", err)
+	}
+
+	// Persist data to database asynchronously
+	go func() {
+		bgCtx := context.Background()
+		if weather.City != "" {
+			if err := s.repo.SaveWeatherData(bgCtx, weather); err != nil {
+				log.Printf("Failed to save weather data: %v", err)
+			}
+		}
+		if traffic.CongestionIndex > 0 {
+			if err := s.repo.SaveTrafficData(bgCtx, traffic); err != nil {
+				log.Printf("Failed to save traffic data: %v", err)
+			}
+		}
+	}()
 
 	// Even with errors, return what we have
 	return domain.DashboardData{

@@ -119,10 +119,11 @@ function AlmatyMap({ heatmapPoints, incidents = [] }: AlmatyMapProps) {
             <div className="absolute bottom-4 right-4 bg-cyber-dark/80 backdrop-blur-sm rounded-lg p-3 border border-cyber-border z-10 pointer-events-none">
                 <p className="text-xs text-cyber-muted mb-2">Уровень загруженности</p>
                 <div className="flex gap-1">
-                    <div className="w-8 h-2 rounded-full bg-cyan-400" title="Низкий" />
-                    <div className="w-8 h-2 rounded-full bg-purple-500" title="Средний" />
-                    <div className="w-8 h-2 rounded-full bg-pink-500" title="Высокий" />
-                    <div className="w-8 h-2 rounded-full bg-red-500" title="Критический" />
+                    <div className="w-6 h-2 rounded-full bg-green-500" title="Свободно" />
+                    <div className="w-6 h-2 rounded-full bg-lime-500" title="Лёгкий" />
+                    <div className="w-6 h-2 rounded-full bg-yellow-500" title="Средний" />
+                    <div className="w-6 h-2 rounded-full bg-orange-500" title="Высокий" />
+                    <div className="w-6 h-2 rounded-full bg-red-500" title="Критический" />
                 </div>
                 <div className="flex justify-between text-xs text-cyber-muted mt-1">
                     <span>Низкий</span>

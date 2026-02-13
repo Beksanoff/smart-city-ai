@@ -8,13 +8,23 @@ import {
     ResponsiveContainer,
     Cell
 } from 'recharts'
+import { useMemo } from 'react'
 
-const data = Array.from({ length: 24 }, (_, i) => ({
-    hour: `${i}:00`,
-    congestion: Math.floor(Math.random() * 80) + 10
-}))
+// Realistic Almaty weekday traffic pattern (based on typical congestion data)
+const HOURLY_PATTERN = [
+    12, 8, 6, 5, 7, 15, 35, 72, 85, 68,
+    52, 55, 62, 58, 50, 55, 68, 82, 78, 55,
+    40, 30, 22, 15
+]
 
 export default function TrafficByHourChart() {
+    const data = useMemo(() =>
+        HOURLY_PATTERN.map((base, i) => ({
+            hour: `${i}:00`,
+            congestion: base
+        })),
+        []
+    )
     return (
         <div className="cyber-card h-[300px]">
             <h3 className="text-lg font-semibold mb-4 text-cyber-text">Загруженность по часам</h3>
