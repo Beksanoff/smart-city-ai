@@ -29,8 +29,10 @@ func (s *TrafficService) GetCurrentTraffic(ctx context.Context) (domain.Traffic,
 
 // generateTrafficData creates realistic traffic patterns for Almaty
 func (s *TrafficService) generateTrafficData() domain.Traffic {
-	hour := time.Now().Hour()
-	weekday := time.Now().Weekday()
+	// Almaty is UTC+5, Docker container is UTC
+	localTime := time.Now().Add(5 * time.Hour)
+	hour := localTime.Hour()
+	weekday := localTime.Weekday()
 
 	// Calculate congestion based on time patterns
 	congestionIndex := s.calculateCongestionIndex(hour, weekday)
@@ -38,6 +40,9 @@ func (s *TrafficService) generateTrafficData() domain.Traffic {
 
 	// Generate heatmap points clustered around Almaty
 	heatmapPoints := s.generateHeatmapPoints(congestionIndex)
+
+	// Generate incidents (accidents, roadworks) based on congestion
+	incidents := s.generateIncidents(congestionIndex)
 
 	// Calculate speeds
 	freeFlowSpeed := 60.0
@@ -49,10 +54,60 @@ func (s *TrafficService) generateTrafficData() domain.Traffic {
 		AverageSpeed:    math.Round(averageSpeed*10) / 10,
 		FreeFlowSpeed:   freeFlowSpeed,
 		HeatmapPoints:   heatmapPoints,
-		IncidentCount:   int(congestionIndex / 20),
+		Incidents:       incidents,
+		IncidentCount:   len(incidents),
 		Timestamp:       time.Now(),
 		IsMock:          s.apiKey == "",
 	}
+}
+
+// generateIncidents creates random road events based on traffic density
+func (s *TrafficService) generateIncidents(congestionIndex float64) []domain.Incident {
+	incidents := make([]domain.Incident, 0)
+
+	// Higher congestion = more incidents
+	baseCount := int(congestionIndex / 15)
+	count := baseCount + rand.Intn(3)
+
+	types := []string{"accident", "roadwork", "police"}
+	descriptions := map[string][]string{
+		"accident": {"Minor collision", "Stalled vehicle", "Rear-end collision", "Multi-car accident"},
+		"roadwork": {"Pothole repair", "Lane closure", "Utility work"},
+		"police":   {"Speed trap", "Traffic control", "Checkpoint"},
+	}
+
+	// Major roads for realistic placement
+	roads := []struct {
+		name     string
+		lat, lon float64
+	}{
+		{"Al-Farabi", 43.203, 76.850},
+		{"Abay", 43.239, 76.850},
+		{"Dostyk", 43.264, 76.960},
+		{"Seifullin", 43.270, 76.932},
+		{"Sain", 43.220, 76.850},
+	}
+
+	for i := 0; i < count; i++ {
+		road := roads[rand.Intn(len(roads))]
+
+		// Random position along the general road direction
+		latOffset := (rand.Float64() - 0.5) * 0.05
+		lonOffset := (rand.Float64() - 0.5) * 0.05
+
+		incType := types[rand.Intn(len(types))]
+		descList := descriptions[incType]
+		desc := descList[rand.Intn(len(descList))]
+
+		incidents = append(incidents, domain.Incident{
+			Latitude:    road.lat + latOffset,
+			Longitude:   road.lon + lonOffset,
+			Type:        incType,
+			Description: desc + " on " + road.name,
+		})
+	}
+
+	return incidents
 }
 
 // calculateCongestionIndex returns 0-100 based on time patterns
@@ -63,17 +118,21 @@ func (s *TrafficService) calculateCongestionIndex(hour int, weekday time.Weekday
 	}
 
 	// Rush hours
+	// Rush hours
 	switch {
 	case hour >= 7 && hour <= 9: // Morning rush
-		return 70 + rand.Float64()*25
+		// Peak variability: 65-95
+		return 65 + rand.Float64()*30
 	case hour >= 17 && hour <= 19: // Evening rush
-		return 75 + rand.Float64()*20
+		// Peak variability: 70-95
+		return 70 + rand.Float64()*25
 	case hour >= 12 && hour <= 14: // Lunch
-		return 50 + rand.Float64()*15
+		return 45 + rand.Float64()*20
 	case hour >= 22 || hour <= 5: // Night
-		return 10 + rand.Float64()*10
+		return 5 + rand.Float64()*15
 	default:
-		return 35 + rand.Float64()*20
+		// Normal traffic
+		return 30 + rand.Float64()*25
 	}
 }
 

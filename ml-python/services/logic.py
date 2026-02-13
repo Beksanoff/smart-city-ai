@@ -127,30 +127,30 @@ class PredictionService:
             if temperature is not None and temperature < -10:
                 aqi = 180  # Unhealthy
                 traffic = 60.0  # Moderate (people avoid going out)
-                insight = "Severe winter conditions. Coal heating causing high smog levels. AQI unhealthy. Recommend staying indoors."
+                insight = "Суровая зима. Угольное отопление вызывает сильный смог. AQI нездоровый. Рекомендуется оставаться дома."
             elif temperature is not None and temperature < 0:
                 aqi = 150  # Unhealthy for sensitive groups
                 traffic = 65.0
-                insight = "Cold winter day. Elevated smog levels expected. Use public transport to reduce emissions."
+                insight = "Холодный день. Ожидается повышенный уровень смога. Используйте общественный транспорт для снижения выбросов."
             else:
                 aqi = 120
                 traffic = 70.0
-                insight = "Mild winter conditions. Moderate air quality. Normal traffic expected."
+                insight = "Мягкая зима. Умеренное качество воздуха. Ожидается обычный трафик."
         elif is_summer:
             # Summer: Good air, vacation traffic reduction
             if temperature is not None and temperature > 30:
                 aqi = 40  # Good
                 traffic = 45.0  # Low (vacation)
-                insight = "Hot summer day. Excellent air quality. Low traffic due to vacation season."
+                insight = "Жаркий летний день. Отличное качество воздуха. Низкий трафик из-за сезона отпусков."
             else:
                 aqi = 55
                 traffic = 55.0
-                insight = "Pleasant summer conditions. Good air quality and moderate traffic."
+                insight = "Приятные летние условия. Хороший воздух и умеренный трафик."
         else:
             # Spring/Autumn: Transition periods
             aqi = 85
             traffic = 65.0
-            insight = "Transitional season. Moderate conditions for both air quality and traffic."
+            insight = "Переходный сезон. Умеренные условия качества воздуха и дорожного движения."
         
         return aqi, traffic, insight
     
@@ -165,25 +165,25 @@ class PredictionService:
         """Get AI-enhanced prediction from Groq"""
         try:
             season = self._get_season_name(month)
-            temp_str = f"{temperature}°C" if temperature else "unknown"
+            temp_str = f"{temperature}°C" if temperature else "неизвестно"
             
-            system_prompt = """You are the Almaty City Dispatcher AI. 
-            You must provide specific, data-driven advice.
-            Mandatory format:
-            1. Current Status: [Temperature]°C, [Weather], [Traffic Level]
-            2. Prediction: When will traffic improve/worsen? (e.g., "Traffic will peak in 30 mins" or "Clearing up by 20:00")
-            3. Recommendation: Why go/not go now? (e.g., "Avoid driving, high smog" or "Good time to travel")
-            Keep it under 4 sentences. Be helpful and local."""
+            system_prompt = """Ты - AI-диспетчер города Алматы.
+            Давай четкие советы на русском языке.
+            Обязательный формат:
+            1. Статус: [Температура], [Погода], [Уровень пробок]
+            2. Прогноз: Когда пробки спадут/вырастут? (например, "Пик через 30 мин" или "Свободно к 20:00")
+            3. Совет: Ехать или нет? (например, "Лучше переждать, сильный смог" или "Отличное время для поездки")
+            Не более 4 предложений. Будь полезным и учитывай местные особенности."""
 
-            user_prompt = f"""Current conditions in Almaty:
-            - Season: {season}
-            - Temperature: {temp_str}
-            - Predicted AQI: {aqi}
-            - Traffic Index: {traffic}%
+            user_prompt = f"""Текущие условия в Алматы:
+            - Сезон: {season}
+            - Температура: {temp_str}
+            - Прогноз AQI: {aqi}
+            - Индекс трафика: {traffic}%
             
-            User query: {query}
+            Вопрос пользователя: {query}
             
-            Provide the response following the mandatory format."""
+            Отвечай строго по формату на русском языке."""
 
             response = self.groq_client.chat.completions.create(
                 model="llama-3.1-8b-instant",
@@ -206,37 +206,37 @@ class PredictionService:
         temp_str = f"{temperature}°C" if temperature else "N/A"
         
         if month in [12, 1, 2]:
-            return f"Stats: {temp_str}, High Smog. Prediction: Traffic peaks at 18:00. Recommendation: Avoid outdoor activities due to heating emissions."
+            return f"Статус: {temp_str}, Высокий смог. Прогноз: Пик пробок в 18:00. Совет: Избегайте прогулок из-за выбросов отопления."
         elif month in [6, 7, 8]:
-            return f"Stats: {temp_str}, Clear Sky. Prediction: Low traffic expected all day. Recommendation: Perfect time for travel."
+            return f"Статус: {temp_str}, Ясно. Прогноз: Низкий трафик весь день. Совет: Отличное время для поездок."
         else:
-            return f"Stats: {temp_str}, Moderate. Prediction: Traffic clearing by 19:30. Recommendation: Standard commute advised."
+            return f"Статус: {temp_str}, Умеренно. Прогноз: Дороги освободятся к 19:30. Совет: Стандартный режим поездок."
     
     def _get_season_name(self, month: int) -> str:
         """Get season name from month"""
         if month in [12, 1, 2]:
-            return "Winter"
+            return "Зима"
         elif month in [3, 4, 5]:
-            return "Spring"
+            return "Весна"
         elif month in [6, 7, 8]:
-            return "Summer"
+            return "Лето"
         else:
-            return "Autumn"
+            return "Осень"
     
     def _get_reasoning(self, month: int, temperature: Optional[float]) -> str:
         """Get explanation for the prediction"""
         reasons = []
         
         if month in [12, 1, 2]:
-            reasons.append("Winter season increases coal heating usage")
+            reasons.append("Зимний сезон увеличивает использование угольного отопления")
             if temperature is not None and temperature < -10:
-                reasons.append("Low temperatures cause atmospheric inversions trapping pollutants")
-            reasons.append("Historical data shows AQI spikes in Dec-Feb")
+                reasons.append("Низкие температуры вызывают инверсию, удерживающую смог")
+            reasons.append("Данные показывают рост AQI в декабре-феврале")
         elif month in [6, 7, 8]:
-            reasons.append("Summer reduces heating-related emissions")
-            reasons.append("Vacation season decreases commuter traffic")
+            reasons.append("Летом снижаются выбросы от отопления")
+            reasons.append("Сезон отпусков уменьшает трафик")
         else:
-            reasons.append("Transitional season with variable conditions")
+            reasons.append("Переходный сезон с переменчивыми условиями")
         
         return ". ".join(reasons) + "."
     

@@ -2,11 +2,13 @@ import { useMemo, useState, useCallback } from 'react'
 import Map, { NavigationControl } from 'react-map-gl/maplibre'
 import DeckGL from '@deck.gl/react'
 import { HeatmapLayer } from '@deck.gl/aggregation-layers'
+import { ScatterplotLayer } from '@deck.gl/layers'
 import 'maplibre-gl/dist/maplibre-gl.css'
-import type { HeatmapPoint } from '../../services/api'
+import type { HeatmapPoint, Incident } from '../../services/api'
 
 interface AlmatyMapProps {
     heatmapPoints: HeatmapPoint[]
+    incidents?: Incident[]
 }
 
 // Координаты центра Алматы
@@ -25,36 +27,68 @@ const INITIAL_VIEW_STATE = {
 // Бесплатные тайлы карты (CARTO темная тема)
 const MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
 
-function AlmatyMap({ heatmapPoints }: AlmatyMapProps) {
+function AlmatyMap({ heatmapPoints, incidents = [] }: AlmatyMapProps) {
     const [viewState, setViewState] = useState(INITIAL_VIEW_STATE)
 
     const onViewStateChange = useCallback(({ viewState: newViewState }: { viewState: typeof INITIAL_VIEW_STATE }) => {
         setViewState(newViewState)
     }, [])
 
-    // Слой тепловой карты Deck.gl - синхронизирован с картой
+    // Слой тепловой карты и инцидентов
     const layers = useMemo(() => {
-        if (!heatmapPoints.length) return []
+        const layersList = []
 
-        return [
-            new HeatmapLayer({
-                id: 'traffic-heatmap',
-                data: heatmapPoints,
-                getPosition: (d: HeatmapPoint) => [d.lon, d.lat],
-                getWeight: (d: HeatmapPoint) => d.intensity,
-                radiusPixels: 50,
-                intensity: 2,
-                threshold: 0.05,
-                colorRange: [
-                    [34, 197, 94, 50],     // Зеленый (Свободно)
-                    [132, 204, 22, 100],   // Салатовый
-                    [234, 179, 8, 150],    // Желтый (Плотно)
-                    [249, 115, 22, 200],   // Оранжевый
-                    [239, 68, 68, 255],    // Красный (Пробка)
-                ],
-            }),
-        ]
-    }, [heatmapPoints])
+        if (heatmapPoints.length > 0) {
+            layersList.push(
+                new HeatmapLayer({
+                    id: 'traffic-heatmap',
+                    data: heatmapPoints,
+                    getPosition: (d: HeatmapPoint) => [d.lon, d.lat],
+                    getWeight: (d: HeatmapPoint) => d.intensity,
+                    radiusPixels: 50,
+                    intensity: 2,
+                    threshold: 0.05,
+                    colorRange: [
+                        [34, 197, 94, 50],     // Зеленый (Свободно)
+                        [132, 204, 22, 100],   // Салатовый
+                        [234, 179, 8, 150],    // Желтый (Плотно)
+                        [249, 115, 22, 200],   // Оранжевый
+                        [239, 68, 68, 255],    // Красный (Пробка)
+                    ],
+                })
+            )
+        }
+
+        if (incidents && incidents.length > 0) {
+            layersList.push(
+                new ScatterplotLayer({
+                    id: 'incidents-layer',
+                    data: incidents,
+                    pickable: true,
+                    opacity: 0.8,
+                    stroked: true,
+                    filled: true,
+                    radiusScale: 6,
+                    radiusMinPixels: 5,
+                    radiusMaxPixels: 15,
+                    lineWidthMinPixels: 1,
+                    getPosition: (d: Incident) => [d.lon, d.lat],
+                    getRadius: 30,
+                    getFillColor: (d: Incident) => {
+                        switch (d.type) {
+                            case 'accident': return [255, 0, 0]
+                            case 'roadwork': return [255, 140, 0]
+                            case 'police': return [0, 0, 255]
+                            default: return [255, 255, 255]
+                        }
+                    },
+                    getLineColor: [0, 0, 0],
+                })
+            )
+        }
+
+        return layersList
+    }, [heatmapPoints, incidents])
 
     return (
         <div className="relative w-full h-full rounded-lg overflow-hidden">

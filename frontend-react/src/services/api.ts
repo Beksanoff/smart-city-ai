@@ -28,12 +28,20 @@ export interface HeatmapPoint {
     intensity: number
 }
 
+export interface Incident {
+    lat: number
+    lon: number
+    type: 'accident' | 'roadwork' | 'police'
+    description: string
+}
+
 export interface Traffic {
     congestion_index: number
     congestion_level: string
     average_speed_kmh: number
     free_flow_speed_kmh: number
     heatmap_points: HeatmapPoint[]
+    incidents: Incident[]
     incident_count: number
     timestamp: string
     is_mock: boolean
@@ -168,20 +176,49 @@ function getMockWeather(): Weather {
 }
 
 function getMockTraffic(): Traffic {
-    const hour = new Date().getHours()
+    const hour = new Date().getHours() // Browser time is already local
     const isRushHour = (hour >= 7 && hour <= 9) || (hour >= 17 && hour <= 19)
-    const congestionIndex = isRushHour ? 75 : 45
+
+    // Add jitter so it doesn't hang on a static value
+    const baseCongestion = isRushHour ? 75 : 40
+    const jitter = Math.random() * 15 - 5 // +/- 5-10
+    const congestionIndex = Math.min(100, Math.max(0, baseCongestion + jitter))
 
     return {
         congestion_index: congestionIndex,
-        congestion_level: isRushHour ? 'Heavy' : 'Moderate',
+        congestion_level: getCongestionLevel(congestionIndex),
         average_speed_kmh: 60 * (1 - congestionIndex / 100),
         free_flow_speed_kmh: 60,
         heatmap_points: generateMockHeatmapPoints(congestionIndex),
+        incidents: generateMockIncidents(congestionIndex),
         incident_count: Math.floor(congestionIndex / 25),
         timestamp: new Date().toISOString(),
         is_mock: true,
     }
+}
+
+function getCongestionLevel(index: number): string {
+    if (index >= 80) return 'Severe'
+    if (index >= 60) return 'Heavy'
+    if (index >= 40) return 'Moderate'
+    if (index >= 20) return 'Light'
+    return 'Free Flow'
+}
+
+function generateMockIncidents(congestionIndex: number): Incident[] {
+    const incidents: Incident[] = []
+    const count = Math.floor(congestionIndex / 15) + 1
+    const center = { lat: 43.2389, lon: 76.8897 }
+
+    for (let i = 0; i < count; i++) {
+        incidents.push({
+            lat: center.lat + (Math.random() - 0.5) * 0.1,
+            lon: center.lon + (Math.random() - 0.5) * 0.1,
+            type: Math.random() > 0.7 ? 'accident' : (Math.random() > 0.5 ? 'roadwork' : 'police'),
+            description: 'Mock incident'
+        })
+    }
+    return incidents
 }
 
 function generateMockHeatmapPoints(congestionIndex: number): HeatmapPoint[] {
@@ -231,12 +268,12 @@ function getMockPrediction(): PredictionResponse {
 
     return {
         prediction: isWinter
-            ? 'Winter conditions in Almaty: High smog expected due to coal heating. Recommend indoor activities and N95 masks outdoors.'
-            : 'Summer conditions in Almaty: Good air quality. Ideal conditions for outdoor activities.',
+            ? 'Зимние условия в Алматы: Высокий смог из-за угольного отопления. Рекомендуется оставаться в помещении и использовать маски N95 на улице.'
+            : 'Летние условия в Алматы: Хорошее качество воздуха. Идеальные условия для прогулок.',
         confidence_score: 0.75,
         aqi_prediction: isWinter ? 160 : 45,
         traffic_index_prediction: isWinter ? 65 : 50,
-        reasoning: 'Based on historical Almaty seasonal patterns',
+        reasoning: 'Основано на исторических сезонных данных Алматы',
         is_mock: true,
     }
 }

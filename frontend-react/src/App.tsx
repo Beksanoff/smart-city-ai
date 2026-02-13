@@ -132,6 +132,7 @@ function App() {
                             <div className="h-[500px] rounded-lg overflow-hidden">
                                 <AlmatyMap
                                     heatmapPoints={dashboardData?.traffic.heatmap_points || []}
+                                    incidents={dashboardData?.traffic.incidents || []}
                                 />
                             </div>
                         </div>
