@@ -14,6 +14,7 @@ import AQIWidget from './components/dashboard/AQIWidget'
 import AlmatyMap from './components/map/AlmatyMap'
 import TripPlanner from './components/dashboard/TripPlanner'
 import AnalyticsDashboard from './components/analytics/AnalyticsDashboard'
+import ErrorBoundary from './components/ErrorBoundary'
 
 type TabType = 'monitor' | 'planner' | 'analytics'
 
@@ -119,29 +120,31 @@ function App() {
                         </div>
 
                         {/* Карта */}
+                        <ErrorBoundary>
                         <div className="cyber-card">
                             <div className="flex items-center justify-between mb-4">
                                 <h2 className="text-lg font-semibold flex items-center gap-2">
                                     <Car className="w-5 h-5 text-cyber-cyan" />
-                                    Тепловая карта трафика
+                                    Карта трафика Алматы
                                 </h2>
                                 <span className="text-sm text-cyber-muted">
-                                    {dashboardData?.traffic.heatmap_points.length || 0} точек данных
+                                    {dashboardData?.traffic.road_segments?.length || 0} дорог отслеживается
                                 </span>
                             </div>
                             <div className="h-[500px] rounded-lg overflow-hidden">
                                 <AlmatyMap
-                                    heatmapPoints={dashboardData?.traffic.heatmap_points || []}
+                                    roadSegments={dashboardData?.traffic.road_segments || []}
                                     incidents={dashboardData?.traffic.incidents || []}
                                 />
                             </div>
                         </div>
+                        </ErrorBoundary>
                     </div>
                 )}
 
-                {activeTab === 'analytics' && <AnalyticsDashboard />}
+                {activeTab === 'analytics' && <ErrorBoundary><AnalyticsDashboard /></ErrorBoundary>}
 
-                {activeTab === 'planner' && <TripPlanner />}
+                {activeTab === 'planner' && <ErrorBoundary><TripPlanner /></ErrorBoundary>}
             </main>
 
             {/* Подвал */}
