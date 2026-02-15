@@ -65,3 +65,8 @@ func (r *MockRepository) GetHistoricalTraffic(ctx context.Context, from, to time
 func (r *MockRepository) Health(ctx context.Context) error {
 	return nil
 }
+
+// SavePredictionLog is a no-op in mock mode
+func (r *MockRepository) SavePredictionLog(ctx context.Context, req domain.PredictionRequest, resp domain.PredictionResponse) error {
+	return nil
+}

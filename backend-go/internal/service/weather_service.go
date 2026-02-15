@@ -100,6 +100,8 @@ func (s *WeatherService) GetCurrentWeather(ctx context.Context) (domain.Weather,
 		return domain.Weather{}, fmt.Errorf("weather: failed to decode response: %w", err)
 	}
 
+	// OpenWeatherMap returns neighborhood name (e.g. "Gornyy Gigant") for Almaty coords,
+	// so we override with the canonical city name.
 	weather := domain.Weather{
 		Temperature: owResp.Main.Temp,
 		FeelsLike:   owResp.Main.FeelsLike,
@@ -107,8 +109,8 @@ func (s *WeatherService) GetCurrentWeather(ctx context.Context) (domain.Weather,
 		Pressure:    owResp.Main.Pressure,
 		WindSpeed:   owResp.Wind.Speed,
 		Visibility:  owResp.Visibility,
-		City:        owResp.Name,
-		Country:     owResp.Sys.Country,
+		City:        "Almaty",
+		Country:     "KZ",
 		Timestamp:   time.Now(),
 		IsMock:      false,
 	}

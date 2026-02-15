@@ -6,8 +6,8 @@ import (
 )
 
 // SetupRoutes configures all HTTP routes
-func SetupRoutes(app *fiber.App, dashboardSvc *service.DashboardService, mlBridge *service.MLBridge) {
-	handler := NewHandler(dashboardSvc, mlBridge)
+func SetupRoutes(app *fiber.App, dashboardSvc *service.DashboardService, mlBridge *service.MLBridge, repo service.DataRepository) {
+	handler := NewHandler(dashboardSvc, mlBridge, repo)
 
 	// Health check
 	app.Get("/health", handler.HealthCheck)
@@ -19,6 +19,10 @@ func SetupRoutes(app *fiber.App, dashboardSvc *service.DashboardService, mlBridg
 		api.Get("/dashboard", handler.GetDashboard)
 		api.Get("/weather", handler.GetWeather)
 		api.Get("/traffic", handler.GetTraffic)
+
+		// History endpoints
+		api.Get("/history/weather", handler.GetHistoricalWeather)
+		api.Get("/history/traffic", handler.GetHistoricalTraffic)
 
 		// Prediction endpoint (proxies to Python ML service)
 		api.Post("/predict", handler.Predict)

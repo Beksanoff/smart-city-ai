@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log"
 	"math"
-	"math/rand"
+	"math/rand/v2"
 	"net/http"
 	"sync"
 	"time"
@@ -77,17 +77,42 @@ type TomTomIncident struct {
 }
 
 // Major Almaty road query points for TomTom Flow API
+// Expanded network: ~25 major roads covering the full city grid
 var almatyRoadPoints = []struct {
 	name               string
 	queryLat, queryLon float64
 	startLat, startLon float64
 	endLat, endLon     float64
 }{
-	{"Al-Farabi", 43.210, 76.900, 43.203, 76.850, 43.218, 76.955},
-	{"Abay", 43.240, 76.905, 43.239, 76.850, 43.243, 76.960},
-	{"Dostyk", 43.230, 76.957, 43.200, 76.960, 43.260, 76.955},
-	{"Seifullin", 43.260, 76.933, 43.220, 76.932, 43.300, 76.935},
-	{"Sain", 43.240, 76.852, 43.200, 76.850, 43.280, 76.855},
+	// ===== East-West major arteries =====
+	{"Al-Farabi Ave", 43.210, 76.900, 43.2065, 76.8430, 43.2190, 76.9620},
+	{"Abay Ave", 43.240, 76.905, 43.2380, 76.8450, 43.2425, 76.9620},
+	{"Rayimbek Ave", 43.255, 76.910, 43.2540, 76.8500, 43.2575, 76.9700},
+	{"Tole Bi St", 43.262, 76.910, 43.2610, 76.8520, 43.2640, 76.9650},
+	{"Gogol St", 43.268, 76.930, 43.2670, 76.8750, 43.2695, 76.9580},
+	{"Zhibek Zholy Ave", 43.258, 76.930, 43.2570, 76.8900, 43.2590, 76.9600},
+	{"Timiryazev St", 43.273, 76.920, 43.2720, 76.8650, 43.2750, 76.9500},
+	{"Satpayev St", 43.235, 76.905, 43.2340, 76.8650, 43.2360, 76.9550},
+	{"Zhandosov St", 43.220, 76.890, 43.2190, 76.8500, 43.2220, 76.9400},
+	{"VOKR (Outer Ring)", 43.290, 76.920, 43.2880, 76.8550, 43.2920, 76.9600},
+
+	// ===== North-South major arteries =====
+	{"Dostyk Ave", 43.230, 76.957, 43.2020, 76.9580, 43.2680, 76.9530},
+	{"Seifullin Ave", 43.260, 76.933, 43.2200, 76.9310, 43.3050, 76.9360},
+	{"Sain Ave", 43.240, 76.852, 43.2000, 76.8500, 43.2850, 76.8550},
+	{"Nauryzbay Batyr St", 43.255, 76.945, 43.2200, 76.9440, 43.2850, 76.9460},
+	{"Furmanov St", 43.245, 76.950, 43.2100, 76.9490, 43.2750, 76.9510},
+	{"Zharokov St", 43.240, 76.910, 43.2150, 76.9090, 43.2700, 76.9110},
+	{"Gagarin Ave", 43.225, 76.885, 43.2020, 76.8840, 43.2500, 76.8860},
+	{"Rozybakiev St", 43.230, 76.870, 43.2100, 76.8690, 43.2600, 76.8710},
+	{"Abylay Khan Ave", 43.260, 76.940, 43.2300, 76.9390, 43.2900, 76.9410},
+	{"Masanchi St", 43.248, 76.948, 43.2250, 76.9470, 43.2700, 76.9490},
+
+	// ===== Ring / Bypass roads =====
+	{"BAKAD (South)", 43.195, 76.910, 43.1930, 76.8400, 43.2000, 76.9800},
+	{"Raiymbek-East", 43.257, 76.970, 43.2560, 76.9600, 43.2580, 77.0100},
+	{"Ryskulov St", 43.280, 76.910, 43.2790, 76.8600, 43.2810, 76.9700},
+	{"Momyshuly Ave", 43.240, 76.840, 43.2100, 76.8390, 43.2750, 76.8410},
 }
 
 // Almaty bounding box for incident queries
@@ -138,6 +163,7 @@ func (s *TrafficService) fetchTomTomTraffic(ctx context.Context) (domain.Traffic
 	var totalCurrentSpeed, totalFreeFlowSpeed float64
 	var roadCount int
 	var heatmapPoints []domain.HeatmapPoint
+	var roadSegments []domain.RoadSegment
 
 	// Query flow data for each major road
 	for _, road := range almatyRoadPoints {
@@ -147,14 +173,21 @@ func (s *TrafficService) fetchTomTomTraffic(ctx context.Context) (domain.Traffic
 			continue
 		}
 
-		totalCurrentSpeed += flow.FlowSegmentData.CurrentSpeed
-		totalFreeFlowSpeed += flow.FlowSegmentData.FreeFlowSpeed
+		currentSpeed := flow.FlowSegmentData.CurrentSpeed
+		freeFlowSpd := flow.FlowSegmentData.FreeFlowSpeed
+		totalCurrentSpeed += currentSpeed
+		totalFreeFlowSpeed += freeFlowSpd
 		roadCount++
 
-		// Build heatmap from real road coordinates returned by TomTom
-		congestion := 1.0 - (flow.FlowSegmentData.CurrentSpeed / math.Max(flow.FlowSegmentData.FreeFlowSpeed, 1))
+		congestion := 1.0 - (currentSpeed / math.Max(freeFlowSpd, 1))
+		congestion = math.Max(0, math.Min(1, congestion))
+
+		// Build road segment from real coordinates
+		var path [][2]float64
 		if len(flow.FlowSegmentData.Coordinates.Coordinate) > 0 {
 			for _, coord := range flow.FlowSegmentData.Coordinates.Coordinate {
+				path = append(path, [2]float64{coord.Longitude, coord.Latitude})
+				// Also keep heatmap points for backward compat
 				heatmapPoints = append(heatmapPoints, domain.HeatmapPoint{
 					Latitude:  coord.Latitude,
 					Longitude: coord.Longitude,
@@ -163,8 +196,19 @@ func (s *TrafficService) fetchTomTomTraffic(ctx context.Context) (domain.Traffic
 			}
 		} else {
 			// Interpolate along road if no coordinates returned
+			path = interpolatePath(road.startLat, road.startLon, road.endLat, road.endLon, 20)
 			pts := s.interpolateRoadPoints(road.startLat, road.startLon, road.endLat, road.endLon, congestion)
 			heatmapPoints = append(heatmapPoints, pts...)
+		}
+
+		if len(path) >= 2 {
+			roadSegments = append(roadSegments, domain.RoadSegment{
+				Name:       road.name,
+				Path:       path,
+				Congestion: math.Round(congestion*100) / 100,
+				Speed:      math.Round(currentSpeed*10) / 10,
+				FreeFlow:   math.Round(freeFlowSpd*10) / 10,
+			})
 		}
 	}
 
@@ -185,6 +229,7 @@ func (s *TrafficService) fetchTomTomTraffic(ctx context.Context) (domain.Traffic
 		CongestionLevel: s.getCongestionLevel(congestionIndex),
 		AverageSpeed:    math.Round(avgCurrentSpeed*10) / 10,
 		FreeFlowSpeed:   math.Round(avgFreeFlowSpeed*10) / 10,
+		RoadSegments:    roadSegments,
 		HeatmapPoints:   heatmapPoints,
 		Incidents:       incidents,
 		IncidentCount:   len(incidents),
@@ -192,8 +237,8 @@ func (s *TrafficService) fetchTomTomTraffic(ctx context.Context) (domain.Traffic
 		IsMock:          false,
 	}
 
-	log.Printf("TomTom traffic: congestion=%.1f%%, speed=%.1f/%.1f km/h, incidents=%d, heatmap=%d pts",
-		congestionIndex, avgCurrentSpeed, avgFreeFlowSpeed, len(incidents), len(heatmapPoints))
+	log.Printf("TomTom traffic: congestion=%.1f%%, speed=%.1f/%.1f km/h, incidents=%d, segments=%d, heatmap=%d pts",
+		congestionIndex, avgCurrentSpeed, avgFreeFlowSpeed, len(incidents), len(roadSegments), len(heatmapPoints))
 
 	return traffic, nil
 }
@@ -345,10 +390,26 @@ func (s *TrafficService) interpolateRoadPoints(x1, y1, x2, y2, congestion float6
 	return points
 }
 
+// interpolatePath generates a path (array of [lon,lat] pairs) along a straight segment
+func interpolatePath(startLat, startLon, endLat, endLon float64, numPoints int) [][2]float64 {
+	path := make([][2]float64, numPoints)
+	for i := 0; i < numPoints; i++ {
+		t := float64(i) / float64(numPoints-1)
+		lat := startLat + t*(endLat-startLat)
+		lon := startLon + t*(endLon-startLon)
+		path[i] = [2]float64{lon, lat} // GeoJSON order: [lon, lat]
+	}
+	return path
+}
+
 // generateTrafficData creates simulated traffic patterns for Almaty (fallback when API unavailable)
 func (s *TrafficService) generateTrafficData() domain.Traffic {
-	// Almaty is UTC+5, Docker container is UTC
-	localTime := time.Now().Add(5 * time.Hour)
+	// Use proper timezone instead of hardcoded UTC+5
+	loc, err := time.LoadLocation("Asia/Almaty")
+	if err != nil {
+		loc = time.FixedZone("Asia/Almaty", 5*3600)
+	}
+	localTime := time.Now().In(loc)
 	hour := localTime.Hour()
 	weekday := localTime.Weekday()
 
@@ -356,21 +417,25 @@ func (s *TrafficService) generateTrafficData() domain.Traffic {
 	congestionIndex := s.calculateCongestionIndex(hour, weekday)
 	congestionLevel := s.getCongestionLevel(congestionIndex)
 
-	// Generate heatmap points clustered around Almaty
-	heatmapPoints := s.generateHeatmapPoints(congestionIndex)
-
-	// Generate incidents (accidents, roadworks) based on congestion
-	incidents := s.generateIncidents(congestionIndex)
-
 	// Calculate speeds
 	freeFlowSpeed := 60.0
 	averageSpeed := freeFlowSpeed * (1 - congestionIndex/100)
+
+	// Generate heatmap points clustered around Almaty
+	heatmapPoints := s.generateHeatmapPoints(congestionIndex)
+
+	// Generate road segments for PathLayer rendering
+	roadSegments := s.generateRoadSegments(congestionIndex, freeFlowSpeed)
+
+	// Generate incidents (accidents, roadworks) based on congestion
+	incidents := s.generateIncidents(congestionIndex)
 
 	return domain.Traffic{
 		CongestionIndex: congestionIndex,
 		CongestionLevel: congestionLevel,
 		AverageSpeed:    math.Round(averageSpeed*10) / 10,
 		FreeFlowSpeed:   freeFlowSpeed,
+		RoadSegments:    roadSegments,
 		HeatmapPoints:   heatmapPoints,
 		Incidents:       incidents,
 		IncidentCount:   len(incidents),
@@ -385,7 +450,7 @@ func (s *TrafficService) generateIncidents(congestionIndex float64) []domain.Inc
 
 	// Higher congestion = more incidents
 	baseCount := int(congestionIndex / 15)
-	count := baseCount + rand.Intn(3)
+	count := baseCount + rand.IntN(3)
 
 	types := []string{"accident", "roadwork", "police"}
 	descriptions := map[string][]string{
@@ -407,15 +472,15 @@ func (s *TrafficService) generateIncidents(congestionIndex float64) []domain.Inc
 	}
 
 	for i := 0; i < count; i++ {
-		road := roads[rand.Intn(len(roads))]
+		road := roads[rand.IntN(len(roads))]
 
 		// Random position along the general road direction
 		latOffset := (rand.Float64() - 0.5) * 0.05
 		lonOffset := (rand.Float64() - 0.5) * 0.05
 
-		incType := types[rand.Intn(len(types))]
+		incType := types[rand.IntN(len(types))]
 		descList := descriptions[incType]
-		desc := descList[rand.Intn(len(descList))]
+		desc := descList[rand.IntN(len(descList))]
 
 		incidents = append(incidents, domain.Incident{
 			Latitude:    road.lat + latOffset,
@@ -474,32 +539,14 @@ func (s *TrafficService) getCongestionLevel(index float64) string {
 func (s *TrafficService) generateHeatmapPoints(congestionIndex float64) []domain.HeatmapPoint {
 	points := make([]domain.HeatmapPoint, 0)
 
-	// Major Almaty Streets (name, startLat, startLon, endLat, endLon)
-	roads := []struct {
-		name           string
-		x1, y1, x2, y2 float64
-	}{
-		{"Al-Farabi", 43.203, 76.850, 43.218, 76.955}, // East-West major
-		{"Abay", 43.239, 76.850, 43.243, 76.960},      // Central East-West
-		{"Dostyk", 43.200, 76.960, 43.260, 76.955},    // North-South
-		{"Seifullin", 43.220, 76.932, 43.300, 76.935}, // North-South
-		{"Sain", 43.200, 76.850, 43.280, 76.855},      // West Ring
-	}
-
-	for _, road := range roads {
-		// Generate points along each road
-		numPoints := 40 + rand.Intn(20) // 40-60 points per road
-
+	for _, road := range almatyRoadPoints {
+		numPoints := 25 + rand.IntN(15)
 		for i := 0; i < numPoints; i++ {
-			// Linear interpolation with jitter
 			t := float64(i) / float64(numPoints)
-			lat := road.x1 + t*(road.x2-road.x1) + (rand.Float64()-0.5)*0.003
-			lon := road.y1 + t*(road.y2-road.y1) + (rand.Float64()-0.5)*0.003
-
-			// Intensity based on congestion index and road "load"
+			lat := road.startLat + t*(road.endLat-road.startLat) + (rand.Float64()-0.5)*0.003
+			lon := road.startLon + t*(road.endLon-road.startLon) + (rand.Float64()-0.5)*0.003
 			baseIntensity := (congestionIndex / 100.0)
-			intensity := baseIntensity * (0.6 + rand.Float64()*0.4) // Random variation
-
+			intensity := baseIntensity * (0.6 + rand.Float64()*0.4)
 			points = append(points, domain.HeatmapPoint{
 				Latitude:  lat,
 				Longitude: lon,
@@ -509,4 +556,28 @@ func (s *TrafficService) generateHeatmapPoints(congestionIndex float64) []domain
 	}
 
 	return points
+}
+
+// generateRoadSegments creates road segments for PathLayer rendering (fallback)
+func (s *TrafficService) generateRoadSegments(congestionIndex float64, freeFlowSpeed float64) []domain.RoadSegment {
+	segments := make([]domain.RoadSegment, 0, len(almatyRoadPoints))
+
+	for _, road := range almatyRoadPoints {
+		// Each road has slightly different congestion
+		variation := (rand.Float64() - 0.5) * 0.3
+		roadCongestion := math.Max(0, math.Min(1, congestionIndex/100.0+variation))
+		roadSpeed := freeFlowSpeed * (1 - roadCongestion)
+
+		path := interpolatePath(road.startLat, road.startLon, road.endLat, road.endLon, 15)
+
+		segments = append(segments, domain.RoadSegment{
+			Name:       road.name,
+			Path:       path,
+			Congestion: math.Round(roadCongestion*100) / 100,
+			Speed:      math.Round(roadSpeed*10) / 10,
+			FreeFlow:   freeFlowSpeed,
+		})
+	}
+
+	return segments
 }

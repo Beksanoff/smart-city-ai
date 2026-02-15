@@ -1,6 +1,10 @@
 package http
 
 import (
+	"context"
+	"log"
+	"time"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/smartcity/backend/internal/domain"
 	"github.com/smartcity/backend/internal/service"
@@ -10,13 +14,15 @@ import (
 type Handler struct {
 	dashboardSvc *service.DashboardService
 	mlBridge     *service.MLBridge
+	repo         service.DataRepository
 }
 
 // NewHandler creates a new handler
-func NewHandler(dashboardSvc *service.DashboardService, mlBridge *service.MLBridge) *Handler {
+func NewHandler(dashboardSvc *service.DashboardService, mlBridge *service.MLBridge, repo service.DataRepository) *Handler {
 	return &Handler{
 		dashboardSvc: dashboardSvc,
 		mlBridge:     mlBridge,
+		repo:         repo,
 	}
 }
 
@@ -88,8 +94,64 @@ func (h *Handler) Predict(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to get prediction")
 	}
 
+	// Log prediction to database asynchronously
+	go func() {
+		bgCtx := context.Background()
+		if saveErr := h.repo.SavePredictionLog(bgCtx, req, prediction); saveErr != nil {
+			log.Printf("Failed to save prediction log: %v", saveErr)
+		}
+	}()
+
 	return c.JSON(fiber.Map{
 		"success": true,
 		"data":    prediction,
+	})
+}
+
+// GetHistoricalWeather returns weather history within a time range
+func (h *Handler) GetHistoricalWeather(c *fiber.Ctx) error {
+	ctx := c.Context()
+
+	hours := c.QueryInt("hours", 24)
+	if hours < 1 || hours > 720 { // max 30 days
+		hours = 24
+	}
+
+	to := time.Now()
+	from := to.Add(-time.Duration(hours) * time.Hour)
+
+	data, err := h.repo.GetHistoricalWeather(ctx, from, to)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to fetch weather history")
+	}
+
+	return c.JSON(fiber.Map{
+		"success": true,
+		"data":    data,
+		"count":   len(data),
+	})
+}
+
+// GetHistoricalTraffic returns traffic history within a time range
+func (h *Handler) GetHistoricalTraffic(c *fiber.Ctx) error {
+	ctx := c.Context()
+
+	hours := c.QueryInt("hours", 24)
+	if hours < 1 || hours > 720 {
+		hours = 24
+	}
+
+	to := time.Now()
+	from := to.Add(-time.Duration(hours) * time.Hour)
+
+	data, err := h.repo.GetHistoricalTraffic(ctx, from, to)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to fetch traffic history")
+	}
+
+	return c.JSON(fiber.Map{
+		"success": true,
+		"data":    data,
+		"count":   len(data),
 	})
 }

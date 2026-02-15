@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/compress"
 	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v2/middleware/limiter"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -62,22 +64,31 @@ func main() {
 		AppName:      "SmartCity API v1.0",
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
+		BodyLimit:    1 * 1024 * 1024, // 1 MB max request body
 		ErrorHandler: customErrorHandler,
 	})
 
 	// Middleware
 	app.Use(recover.New())
+	app.Use(compress.New(compress.Config{
+		Level: compress.LevelBestSpeed,
+	}))
 	app.Use(logger.New(logger.Config{
 		Format: "[${time}] ${status} - ${method} ${path} (${latency})\n",
 	}))
+	app.Use(limiter.New(limiter.Config{
+		Max:               60,
+		Expiration:        1 * time.Minute,
+		LimiterMiddleware: limiter.SlidingWindow{},
+	}))
 	app.Use(cors.New(cors.Config{
-		AllowOrigins: "*",
-		AllowMethods: "GET,POST,PUT,DELETE,OPTIONS",
+		AllowOrigins: "http://localhost:3000, http://localhost:5173",
+		AllowMethods: "GET,POST,OPTIONS",
 		AllowHeaders: "Origin,Content-Type,Accept,Authorization",
 	}))
 
 	// Routes
-	http.SetupRoutes(app, dashboardSvc, mlBridge)
+	http.SetupRoutes(app, dashboardSvc, mlBridge, dataRepo)
 
 	// Graceful shutdown
 	go func() {

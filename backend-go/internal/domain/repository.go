@@ -38,6 +38,9 @@ type DataRepository interface {
 	// SaveTrafficData persists traffic data
 	SaveTrafficData(ctx context.Context, data Traffic) error
 
+	// SavePredictionLog persists a prediction request/response
+	SavePredictionLog(ctx context.Context, req PredictionRequest, resp PredictionResponse) error
+
 	// GetHistoricalWeather retrieves weather history
 	GetHistoricalWeather(ctx context.Context, from, to time.Time) ([]Weather, error)
 
