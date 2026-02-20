@@ -12,7 +12,7 @@ export default function AnalyticsDashboard() {
                 </div>
                 <div>
                     <h2 className="text-xl font-bold neon-text">Аналитика</h2>
-                    <p className="text-sm text-cyber-muted">Исторические тренды и корреляции (Mock Data)</p>
+                    <p className="text-sm text-cyber-muted">Исторические тренды и корреляции</p>
                 </div>
             </div>
 

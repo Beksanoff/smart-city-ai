@@ -31,7 +31,7 @@ func NewTrafficService(apiKey string) *TrafficService {
 	return &TrafficService{
 		apiKey:     apiKey,
 		httpClient: &http.Client{Timeout: 15 * time.Second},
-		cacheTTL:   3 * time.Minute,
+		cacheTTL:   15 * time.Minute, // 15 min to stay within TomTom free-tier (2,500/day)
 	}
 }
 
@@ -121,6 +121,13 @@ const (
 	almatyMaxLat = 43.35
 	almatyMinLon = 76.80
 	almatyMaxLon = 77.00
+
+	// Minimum free-flow speed baseline for Almaty roads.
+	// TomTom reports conservatively low freeflow (~42 km/h) because it
+	// factors in signals and intersections. Real free-flow on major
+	// Almaty roads is 55-65 km/h. Using a higher baseline produces
+	// congestion indices that match perceived congestion (e.g. 2GIS scores).
+	minFreeFlowSpeedKmh = 55.0
 )
 
 // GetCurrentTraffic fetches real traffic data from TomTom API with cache
@@ -175,11 +182,13 @@ func (s *TrafficService) fetchTomTomTraffic(ctx context.Context) (domain.Traffic
 
 		currentSpeed := flow.FlowSegmentData.CurrentSpeed
 		freeFlowSpd := flow.FlowSegmentData.FreeFlowSpeed
+		// Use the higher of TomTom's freeflow and our Almaty baseline
+		effectiveFreeFlow := math.Max(freeFlowSpd, minFreeFlowSpeedKmh)
 		totalCurrentSpeed += currentSpeed
-		totalFreeFlowSpeed += freeFlowSpd
+		totalFreeFlowSpeed += effectiveFreeFlow
 		roadCount++
 
-		congestion := 1.0 - (currentSpeed / math.Max(freeFlowSpd, 1))
+		congestion := 1.0 - (currentSpeed / math.Max(effectiveFreeFlow, 1))
 		congestion = math.Max(0, math.Min(1, congestion))
 
 		// Build road segment from real coordinates
@@ -207,7 +216,7 @@ func (s *TrafficService) fetchTomTomTraffic(ctx context.Context) (domain.Traffic
 				Path:       path,
 				Congestion: math.Round(congestion*100) / 100,
 				Speed:      math.Round(currentSpeed*10) / 10,
-				FreeFlow:   math.Round(freeFlowSpd*10) / 10,
+				FreeFlow:   math.Round(effectiveFreeFlow*10) / 10,
 			})
 		}
 	}
@@ -218,7 +227,17 @@ func (s *TrafficService) fetchTomTomTraffic(ctx context.Context) (domain.Traffic
 
 	avgCurrentSpeed := totalCurrentSpeed / float64(roadCount)
 	avgFreeFlowSpeed := totalFreeFlowSpeed / float64(roadCount)
-	congestionIndex := (1 - avgCurrentSpeed/math.Max(avgFreeFlowSpeed, 1)) * 100
+
+	// Raw linear ratio
+	rawRatio := 1 - avgCurrentSpeed/math.Max(avgFreeFlowSpeed, 1)
+	rawRatio = math.Max(0, math.Min(1, rawRatio))
+
+	// Non-linear scaling: amplify mid-range congestion so that
+	// 28 km/h avg (rawRatio ~0.49) maps to ~75% instead of ~49%.
+	// Uses a power curve: scaled = 1 - (1-raw)^1.6
+	// This makes the index feel closer to 2GIS / Yandex 10-point scale.
+	scaled := 1 - math.Pow(1-rawRatio, 1.6)
+	congestionIndex := scaled * 100
 	congestionIndex = math.Max(0, math.Min(100, congestionIndex))
 
 	// Fetch real incidents
@@ -237,8 +256,8 @@ func (s *TrafficService) fetchTomTomTraffic(ctx context.Context) (domain.Traffic
 		IsMock:          false,
 	}
 
-	log.Printf("TomTom traffic: congestion=%.1f%%, speed=%.1f/%.1f km/h, incidents=%d, segments=%d, heatmap=%d pts",
-		congestionIndex, avgCurrentSpeed, avgFreeFlowSpeed, len(incidents), len(roadSegments), len(heatmapPoints))
+	log.Printf("TomTom traffic: congestion=%.1f%% (raw=%.1f%%), speed=%.1f/%.1f km/h, incidents=%d, segments=%d, heatmap=%d pts",
+		congestionIndex, rawRatio*100, avgCurrentSpeed, avgFreeFlowSpeed, len(incidents), len(roadSegments), len(heatmapPoints))
 
 	return traffic, nil
 }
@@ -519,7 +538,14 @@ func (s *TrafficService) calculateCongestionIndex(hour int, weekday time.Weekday
 	}
 }
 
-// getCongestionLevel returns human-readable level
+// getCongestionLevel returns human-readable level.
+// Thresholds calibrated to match 2GIS/Yandex-style 10-point scale:
+//
+//	 0-15  → Free Flow  (1-2 балла)
+//	15-40  → Light      (3-4 балла)
+//	40-60  → Moderate   (5-6 баллов)
+//	60-80  → Heavy      (7-8 баллов)
+//	80-100 → Severe     (9-10 баллов)
 func (s *TrafficService) getCongestionLevel(index float64) string {
 	switch {
 	case index >= 80:
@@ -528,7 +554,7 @@ func (s *TrafficService) getCongestionLevel(index float64) string {
 		return "Heavy"
 	case index >= 40:
 		return "Moderate"
-	case index >= 20:
+	case index >= 15:
 		return "Light"
 	default:
 		return "Free Flow"

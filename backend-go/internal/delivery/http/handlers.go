@@ -2,7 +2,12 @@ package http
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
 	"log"
+	"net/http"
+	"regexp"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -89,6 +94,20 @@ func (h *Handler) Predict(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
 	}
 
+	// Validation
+	if req.Query != "" && len(req.Query) > 1000 {
+		return fiber.NewError(fiber.StatusBadRequest, "Query too long (max 1000 characters)")
+	}
+	if req.Date != "" {
+		dateRe := regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+		if !dateRe.MatchString(req.Date) {
+			return fiber.NewError(fiber.StatusBadRequest, "Date must be in YYYY-MM-DD format")
+		}
+	}
+	if req.Temperature != 0 && (req.Temperature < -50 || req.Temperature > 55) {
+		return fiber.NewError(fiber.StatusBadRequest, "Temperature must be between -50 and 55")
+	}
+
 	prediction, err := h.mlBridge.Predict(ctx, req)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to get prediction")
@@ -106,6 +125,36 @@ func (h *Handler) Predict(c *fiber.Ctx) error {
 		"success": true,
 		"data":    prediction,
 	})
+}
+
+// GetStats proxies ML stats request to Python ML service
+func (h *Handler) GetStats(c *fiber.Ctx) error {
+	mlURL := h.mlBridge.GetServiceURL()
+	url := fmt.Sprintf("%s/stats", mlURL)
+
+	httpReq, err := http.NewRequestWithContext(c.Context(), http.MethodGet, url, nil)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create stats request")
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "ML service unavailable")
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to read stats response")
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Invalid stats response")
+	}
+
+	return c.JSON(result)
 }
 
 // GetHistoricalWeather returns weather history within a time range

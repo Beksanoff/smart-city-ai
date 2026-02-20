@@ -14,8 +14,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Generate initial dataset
-RUN python tools/generate_history.py
+# Generate dataset only if real data doesn't exist already
+RUN if [ ! -f data/almaty_history.csv ]; then python tools/generate_history.py; fi
 
 # Expose port
 EXPOSE 8000

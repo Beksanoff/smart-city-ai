@@ -1,52 +1,64 @@
-import { useMemo, useState, useCallback } from 'react'
-import Map, { NavigationControl } from 'react-map-gl/maplibre'
-import DeckGL from '@deck.gl/react'
-import { PathLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers'
-import 'maplibre-gl/dist/maplibre-gl.css'
-import type { RoadSegment, Incident } from '../../services/api'
+import { useEffect, useRef, useState, useCallback } from 'react'
+import type { Incident } from '../../services/api'
+
+/** Yandex traffic score payload sent via onTrafficScore callback */
+export interface YandexTrafficScore {
+    /** Yandex 0-10 score (0 = no data, 1-10 = congestion) */
+    level: number
+    /** Estimated congestion index 0-100 derived from Yandex score */
+    congestionIndex: number
+    /** Human-readable congestion level */
+    congestionLevel: string
+    /** Estimated average speed km/h */
+    averageSpeed: number
+    /** Free-flow baseline speed km/h */
+    freeFlowSpeed: number
+}
 
 interface AlmatyMapProps {
-    roadSegments: RoadSegment[]
+    roadSegments: unknown[] // kept for interface compat, Yandex shows its own traffic
     incidents?: Incident[]
+    /** Called when Yandex traffic score changes (real-time, every ~60s) */
+    onTrafficScore?: (score: YandexTrafficScore) => void
 }
 
 // Координаты центра Алматы
-const ALMATY_CENTER = {
-    latitude: 43.2389,
-    longitude: 76.8897,
-}
+const ALMATY_CENTER: [number, number] = [43.2389, 76.8897] // [lat, lon] for Yandex
 
-const INITIAL_VIEW_STATE = {
-    ...ALMATY_CENTER,
-    zoom: 12,
-    pitch: 0,
-    bearing: 0,
-}
+// Yandex Maps API key (получить на developer.tech.yandex.ru)
+const YANDEX_API_KEY = import.meta.env.VITE_YANDEX_MAPS_API_KEY || ''
 
-// CARTO dark-matter — бесплатные тайлы
-const MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
+// Global state: prevent multiple script loads
+let ymapsPromise: Promise<void> | null = null
 
-/** Плавная интерполяция цвета congestion: 0→зелёный, 0.5→жёлтый, 0.75→оранж, 1→красный */
-function congestionToColor(c: number): [number, number, number, number] {
-    const v = Math.max(0, Math.min(1, c))
-    if (v < 0.35) {
-        // green → yellow-green
-        const t = v / 0.35
-        return [Math.round(34 + t * (180 - 34)), Math.round(197 - t * (197 - 200)), Math.round(94 - t * 74), 220]
-    }
-    if (v < 0.55) {
-        // yellow-green → yellow
-        const t = (v - 0.35) / 0.2
-        return [Math.round(180 + t * (234 - 180)), Math.round(200 - t * (200 - 179)), Math.round(20 - t * 12), 230]
-    }
-    if (v < 0.75) {
-        // yellow → orange
-        const t = (v - 0.55) / 0.2
-        return [Math.round(234 + t * (249 - 234)), Math.round(179 - t * (179 - 115)), Math.round(8 + t * (22 - 8)), 240]
-    }
-    // orange → red
-    const t = (v - 0.75) / 0.25
-    return [Math.round(249 - t * (249 - 220)), Math.round(115 - t * (115 - 38)), Math.round(22 - t * 22), 255]
+/**
+ * Load Yandex Maps JS API v2.1 once, return a Promise that resolves when ymaps.ready() fires.
+ */
+function loadYandexMaps(): Promise<void> {
+    if (ymapsPromise) return ymapsPromise
+
+    ymapsPromise = new Promise((resolve, reject) => {
+        // Already loaded (e.g. via index.html)
+        if (window.ymaps) {
+            window.ymaps.ready(resolve)
+            return
+        }
+
+        const script = document.createElement('script')
+        const keyPart = YANDEX_API_KEY ? `apikey=${YANDEX_API_KEY}&` : ''
+        script.src = `https://api-maps.yandex.ru/2.1/?${keyPart}lang=ru_RU`
+        script.async = true
+        script.onload = () => {
+            window.ymaps.ready(resolve)
+        }
+        script.onerror = () => {
+            ymapsPromise = null
+            reject(new Error('Failed to load Yandex Maps API'))
+        }
+        document.head.appendChild(script)
+    })
+
+    return ymapsPromise
 }
 
 function incidentEmoji(type: string): string {
@@ -58,202 +70,186 @@ function incidentEmoji(type: string): string {
     }
 }
 
-function incidentColor(type: string): [number, number, number] {
-    switch (type) {
-        case 'accident': return [255, 50, 50]
-        case 'roadwork': return [255, 165, 0]
-        case 'police': return [80, 120, 255]
-        default: return [255, 255, 255]
-    }
-}
-
 function incidentLabel(type: string): string {
     switch (type) {
         case 'accident': return 'ДТП'
-        case 'roadwork': return 'Ремонт'
+        case 'roadwork': return 'Ремонт дороги'
         case 'police': return 'Полиция'
         default: return 'Событие'
     }
 }
 
-interface TooltipInfo {
-    x: number
-    y: number
-    text: string
+/**
+ * Convert Yandex 1-10 score to our traffic metrics.
+ * Mapping:
+ *   1-2  → Free Flow  (0-20%)
+ *   3-4  → Light      (20-40%)
+ *   5-6  → Moderate   (40-60%)
+ *   7-8  → Heavy      (60-80%)
+ *   9-10 → Severe     (80-100%)
+ */
+function yandexScoreToMetrics(level: number): YandexTrafficScore {
+    const ALMATY_FREE_FLOW = 55 // km/h baseline
+    const clamped = Math.max(0, Math.min(10, level))
+    const congestionIndex = clamped * 10 // 1→10%, 5→50%, 10→100%
+    const averageSpeed = Math.round(ALMATY_FREE_FLOW * (1 - congestionIndex / 100) * 10) / 10
+
+    let congestionLevel: string
+    if (congestionIndex >= 80) congestionLevel = 'Severe'
+    else if (congestionIndex >= 60) congestionLevel = 'Heavy'
+    else if (congestionIndex >= 40) congestionLevel = 'Moderate'
+    else if (congestionIndex >= 15) congestionLevel = 'Light'
+    else congestionLevel = 'Free Flow'
+
+    return {
+        level: clamped,
+        congestionIndex,
+        congestionLevel,
+        averageSpeed,
+        freeFlowSpeed: ALMATY_FREE_FLOW,
+    }
 }
 
-function AlmatyMap({ roadSegments, incidents = [] }: AlmatyMapProps) {
-    const [viewState, setViewState] = useState(INITIAL_VIEW_STATE)
-    const [tooltip, setTooltip] = useState<TooltipInfo | null>(null)
+function AlmatyMap({ roadSegments: _roadSegments, incidents = [], onTrafficScore }: AlmatyMapProps) {
+    const containerRef = useRef<HTMLDivElement>(null)
+    const mapRef = useRef<any>(null)
+    const incidentsCollectionRef = useRef<any>(null)
+    const [mapReady, setMapReady] = useState(false)
+    const [loadError, setLoadError] = useState<string | null>(null)
+    const onTrafficScoreRef = useRef(onTrafficScore)
+    onTrafficScoreRef.current = onTrafficScore
 
-    const onViewStateChange = useCallback(({ viewState: newViewState }: { viewState: typeof INITIAL_VIEW_STATE }) => {
-        setViewState(newViewState)
+    // Initialize Yandex Map
+    useEffect(() => {
+        let destroyed = false
+
+        loadYandexMaps()
+            .then(() => {
+                if (destroyed || !containerRef.current) return
+                if (mapRef.current) return // already created
+
+                const ymaps = window.ymaps
+
+                const map = new ymaps.Map(containerRef.current, {
+                    center: ALMATY_CENTER,
+                    zoom: 12,
+                    controls: ['zoomControl', 'geolocationControl'],
+                    type: 'yandex#map',
+                }, {
+                    suppressMapOpenBlock: true, // hide "Open in Yandex Maps" popup
+                })
+
+                // --- Traffic layer (colored roads + incidents from Yandex) ---
+                const trafficControl = new ymaps.control.TrafficControl({
+                    state: { providerKey: 'traffic#actual', trafficShown: true },
+                })
+                map.controls.add(trafficControl)
+                // Auto-show traffic
+                const provider = trafficControl.getProvider('traffic#actual')
+                provider.state.set('infoLayerShown', true)
+
+                // --- Extract real Yandex traffic score (1-10) ---
+                const emitScore = () => {
+                    const level = provider.state.get('level')
+                    if (level != null && typeof level === 'number' && level > 0) {
+                        const metrics = yandexScoreToMetrics(level)
+                        onTrafficScoreRef.current?.(metrics)
+                    }
+                }
+                // Listen for score changes (updates ~every 60s)
+                provider.state.events.add('change', emitScore)
+                // Also try to read initial value after a short delay
+                setTimeout(emitScore, 3000)
+
+                // Create a GeoObjectCollection for TomTom incidents overlay
+                const incidentsCollection = new ymaps.GeoObjectCollection()
+                map.geoObjects.add(incidentsCollection)
+                incidentsCollectionRef.current = incidentsCollection
+
+                mapRef.current = map
+                setMapReady(true)
+            })
+            .catch((err) => {
+                if (!destroyed) {
+                    setLoadError(err?.message || 'Ошибка загрузки карты')
+                }
+            })
+
+        return () => {
+            destroyed = true
+            if (mapRef.current) {
+                mapRef.current.destroy()
+                mapRef.current = null
+            }
+        }
     }, [])
 
-    const layers = useMemo(() => {
-        const result: any[] = []
+    // Update TomTom incident markers on the Yandex map
+    const updateIncidents = useCallback(() => {
+        if (!mapReady || !incidentsCollectionRef.current || !window.ymaps) return
 
-        // --- Road segments (colored lines like Google/Yandex traffic) ---
-        if (roadSegments.length > 0) {
-            // Background glow layer (wider, semi-transparent)
-            result.push(
-                new PathLayer({
-                    id: 'road-glow',
-                    data: roadSegments,
-                    getPath: (d: RoadSegment) => d.path,
-                    getColor: (d: RoadSegment) => {
-                        const c = congestionToColor(d.congestion)
-                        return [c[0], c[1], c[2], 60] as [number, number, number, number]
-                    },
-                    getWidth: 18,
-                    widthUnits: 'pixels' as const,
-                    widthMinPixels: 6,
-                    widthMaxPixels: 24,
-                    capRounded: true,
-                    jointRounded: true,
-                    pickable: false,
-                })
+        const collection = incidentsCollectionRef.current
+        collection.removeAll()
+
+        incidents.forEach((inc) => {
+            const placemark = new window.ymaps.Placemark(
+                [inc.lat, inc.lon],
+                {
+                    iconCaption: incidentLabel(inc.type),
+                    balloonContentHeader: `${incidentEmoji(inc.type)} ${incidentLabel(inc.type)}`,
+                    balloonContentBody: inc.description,
+                },
+                {
+                    preset: inc.type === 'accident'
+                        ? 'islands#redDotIcon'
+                        : inc.type === 'roadwork'
+                            ? 'islands#orangeDotIcon'
+                            : 'islands#blueDotIcon',
+                }
             )
+            collection.add(placemark)
+        })
+    }, [incidents, mapReady])
 
-            // Main road layer
-            result.push(
-                new PathLayer({
-                    id: 'road-segments',
-                    data: roadSegments,
-                    getPath: (d: RoadSegment) => d.path,
-                    getColor: (d: RoadSegment) => congestionToColor(d.congestion),
-                    getWidth: 6,
-                    widthUnits: 'pixels' as const,
-                    widthMinPixels: 2,
-                    widthMaxPixels: 10,
-                    capRounded: true,
-                    jointRounded: true,
-                    pickable: true,
-                    autoHighlight: true,
-                    highlightColor: [255, 255, 255, 80],
-                    onHover: (info: { object?: RoadSegment; x?: number; y?: number }) => {
-                        if (info.object && info.x != null && info.y != null) {
-                            const d = info.object
-                            const pct = Math.round(d.congestion * 100)
-                            setTooltip({
-                                x: info.x,
-                                y: info.y,
-                                text: `${d.name}\nЗагруженность: ${pct}%\nСкорость: ${d.speed} км/ч (${d.free_flow} км/ч свободный)`,
-                            })
-                        } else {
-                            setTooltip(null)
-                        }
-                    },
-                })
-            )
-        }
+    useEffect(() => {
+        updateIncidents()
+    }, [updateIncidents])
 
-        // --- Incidents ---
-        if (incidents.length > 0) {
-            // Glow ring behind incident
-            result.push(
-                new ScatterplotLayer({
-                    id: 'incident-glow',
-                    data: incidents,
-                    getPosition: (d: Incident) => [d.lon, d.lat],
-                    getRadius: 200,
-                    getFillColor: (d: Incident) => [...incidentColor(d.type), 40] as [number, number, number, number],
-                    radiusMinPixels: 12,
-                    radiusMaxPixels: 30,
-                    pickable: false,
-                })
-            )
-
-            // Solid dot
-            result.push(
-                new ScatterplotLayer({
-                    id: 'incident-dot',
-                    data: incidents,
-                    getPosition: (d: Incident) => [d.lon, d.lat],
-                    getRadius: 80,
-                    getFillColor: (d: Incident) => [...incidentColor(d.type), 230] as [number, number, number, number],
-                    getLineColor: [255, 255, 255, 180],
-                    lineWidthMinPixels: 1,
-                    stroked: true,
-                    radiusMinPixels: 5,
-                    radiusMaxPixels: 12,
-                    pickable: true,
-                    onHover: (info: { object?: Incident; x?: number; y?: number }) => {
-                        if (info.object && info.x != null && info.y != null) {
-                            const d = info.object
-                            setTooltip({
-                                x: info.x,
-                                y: info.y,
-                                text: `${incidentEmoji(d.type)} ${incidentLabel(d.type)}\n${d.description}`,
-                            })
-                        } else {
-                            setTooltip(null)
-                        }
-                    },
-                })
-            )
-
-            // Emoji icon above incident
-            result.push(
-                new TextLayer({
-                    id: 'incident-emoji',
-                    data: incidents,
-                    getPosition: (d: Incident) => [d.lon, d.lat],
-                    getText: (d: Incident) => incidentEmoji(d.type),
-                    getSize: 22,
-                    getPixelOffset: [0, -18],
-                    pickable: false,
-                })
-            )
-        }
-
-        return result
-    }, [roadSegments, incidents])
+    // Error state
+    if (loadError) {
+        return (
+            <div className="relative w-full h-full rounded-lg overflow-hidden flex items-center justify-center bg-cyber-dark">
+                <div className="text-center">
+                    <p className="text-red-400 text-sm mb-2">⚠️ {loadError}</p>
+                    <p className="text-cyber-muted text-xs">
+                        Проверьте VITE_YANDEX_MAPS_API_KEY в настройках
+                    </p>
+                </div>
+            </div>
+        )
+    }
 
     return (
         <div className="relative w-full h-full rounded-lg overflow-hidden">
-            <DeckGL
-                viewState={viewState}
-                onViewStateChange={onViewStateChange}
-                controller={true}
-                layers={layers}
-                style={{ position: 'absolute', inset: 0 }}
-            >
-                <Map
-                    mapStyle={MAP_STYLE}
-                    attributionControl={false}
-                >
-                    <NavigationControl position="top-right" />
-                </Map>
-            </DeckGL>
-
-            {/* Tooltip */}
-            {tooltip && (
-                <div
-                    className="absolute z-20 bg-cyber-dark/95 backdrop-blur-md text-sm text-cyber-text rounded-lg px-3 py-2 border border-cyber-border shadow-lg pointer-events-none whitespace-pre-line max-w-[260px]"
-                    style={{ left: tooltip.x + 12, top: tooltip.y - 12 }}
-                >
-                    {tooltip.text}
-                </div>
-            )}
+            {/* Yandex Map container */}
+            <div ref={containerRef} className="w-full h-full" />
 
             {/* Заголовок карты */}
             <div className="absolute top-4 left-4 bg-cyber-dark/80 backdrop-blur-sm rounded-lg px-4 py-2 border border-cyber-border z-10 pointer-events-none">
                 <div className="flex items-center gap-2 text-sm">
                     <span className="w-2 h-2 rounded-full bg-cyber-cyan live-pulse" />
-                    <span className="text-cyber-muted">Трафик Алматы — в реальном времени</span>
+                    <span className="text-cyber-muted">Яндекс Карты — трафик в реальном времени</span>
                 </div>
             </div>
 
-            {/* Легенда трафика */}
+            {/* Легенда */}
             <div className="absolute bottom-4 right-4 bg-cyber-dark/80 backdrop-blur-sm rounded-lg p-3 border border-cyber-border z-10 pointer-events-none">
-                <p className="text-xs text-cyber-muted mb-2 font-medium">Загруженность дорог</p>
+                <p className="text-xs text-cyber-muted mb-2 font-medium">Загруженность дорог (Яндекс)</p>
                 <div className="flex items-center gap-1">
-                    <div className="w-8 h-[5px] rounded-full" style={{ background: 'rgb(34,197,94)' }} />
-                    <div className="w-8 h-[5px] rounded-full" style={{ background: 'rgb(180,200,20)' }} />
-                    <div className="w-8 h-[5px] rounded-full" style={{ background: 'rgb(234,179,8)' }} />
-                    <div className="w-8 h-[5px] rounded-full" style={{ background: 'rgb(249,115,22)' }} />
-                    <div className="w-8 h-[5px] rounded-full" style={{ background: 'rgb(220,38,0)' }} />
+                    <div className="w-8 h-[5px] rounded-full" style={{ background: '#20b020' }} />
+                    <div className="w-8 h-[5px] rounded-full" style={{ background: '#ffd500' }} />
+                    <div className="w-8 h-[5px] rounded-full" style={{ background: '#ff5500' }} />
+                    <div className="w-8 h-[5px] rounded-full" style={{ background: '#b00000' }} />
                 </div>
                 <div className="flex justify-between text-[10px] text-cyber-muted mt-1">
                     <span>Свободно</span>
@@ -263,7 +259,7 @@ function AlmatyMap({ roadSegments, incidents = [] }: AlmatyMapProps) {
                 {incidents.length > 0 && (
                     <>
                         <div className="border-t border-cyber-border my-2" />
-                        <p className="text-xs text-cyber-muted mb-1 font-medium">Инциденты</p>
+                        <p className="text-xs text-cyber-muted mb-1 font-medium">Инциденты (TomTom)</p>
                         <div className="flex flex-col gap-1 text-[11px]">
                             <span>🚨 ДТП</span>
                             <span>🚧 Ремонт дороги</span>
@@ -273,12 +269,19 @@ function AlmatyMap({ roadSegments, incidents = [] }: AlmatyMapProps) {
                 )}
             </div>
 
-            {/* Счётчик дорог */}
+            {/* Счётчик инцидентов */}
             <div className="absolute bottom-4 left-4 text-xs text-cyber-muted font-mono z-10 pointer-events-none">
-                🛣️ {roadSegments.length} дорог • {incidents.length} событий
+                🚦 Трафик Яндекс • {incidents.length} инцидентов TomTom
             </div>
         </div>
     )
 }
 
 export default AlmatyMap
+
+// Declare ymaps on window for TypeScript
+declare global {
+    interface Window {
+        ymaps: any
+    }
+}

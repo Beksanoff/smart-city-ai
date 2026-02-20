@@ -3,6 +3,12 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+# Build args for Vite (embedded at build time)
+ARG VITE_API_URL
+ARG VITE_YANDEX_MAPS_API_KEY
+ENV VITE_API_URL=${VITE_API_URL}
+ENV VITE_YANDEX_MAPS_API_KEY=${VITE_YANDEX_MAPS_API_KEY}
+
 # Copy package files
 COPY package*.json ./
 

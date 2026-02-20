@@ -7,167 +7,201 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/smartcity/backend/internal/domain"
 )
 
-// WeatherService handles weather data fetching
+// WeatherService fetches weather + AQI from Open-Meteo (free, no API key).
+// Replaces OpenWeatherMap to avoid rate limits (1,000/day).
+// Open-Meteo allows 10,000+ requests/day, no key needed.
 type WeatherService struct {
-	apiKey     string
 	httpClient *http.Client
+
+	// Cache to avoid excessive API calls
+	mu          sync.RWMutex
+	cachedData  *domain.Weather
+	cacheExpiry time.Time
+	cacheTTL    time.Duration
 }
 
-// NewWeatherService creates a new weather service
+// NewWeatherService creates a weather service using Open-Meteo.
+// The apiKey param is kept for backward compatibility but is unused.
 func NewWeatherService(apiKey string) *WeatherService {
 	return &WeatherService{
-		apiKey: apiKey,
-		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
-		},
+		httpClient: &http.Client{Timeout: 10 * time.Second},
+		cacheTTL:   5 * time.Minute, // Cache 5 min (Open-Meteo updates every 15 min)
 	}
 }
 
-// OpenWeatherResponse represents the OpenWeatherMap API response
-type OpenWeatherResponse struct {
-	Main struct {
-		Temp      float64 `json:"temp"`
-		FeelsLike float64 `json:"feels_like"`
-		Humidity  int     `json:"humidity"`
-		Pressure  int     `json:"pressure"`
-	} `json:"main"`
-	Weather []struct {
-		Description string `json:"description"`
-		Icon        string `json:"icon"`
-	} `json:"weather"`
-	Wind struct {
-		Speed float64 `json:"speed"`
-	} `json:"wind"`
-	Visibility int    `json:"visibility"`
-	Name       string `json:"name"`
-	Sys        struct {
-		Country string `json:"country"`
-	} `json:"sys"`
+// --- Open-Meteo response structs ---
+
+type OpenMeteoCurrentResponse struct {
+	Current struct {
+		Time               string  `json:"time"`
+		Temperature2m      float64 `json:"temperature_2m"`
+		RelativeHumidity2m int     `json:"relative_humidity_2m"`
+		ApparentTemp       float64 `json:"apparent_temperature"`
+		WeatherCode        int     `json:"weather_code"`
+		WindSpeed10m       float64 `json:"wind_speed_10m"`
+		SurfacePressure    float64 `json:"surface_pressure"`
+	} `json:"current"`
 }
 
-// AirPollutionResponse represents OpenWeatherMap Air Pollution API response
-type AirPollutionResponse struct {
-	List []struct {
-		Main struct {
-			AQI int `json:"aqi"` // 1-5 European scale
-		} `json:"main"`
-		Components struct {
-			PM25 float64 `json:"pm2_5"` // μg/m³
-			PM10 float64 `json:"pm10"`
-			NO2  float64 `json:"no2"`
-			SO2  float64 `json:"so2"`
-			CO   float64 `json:"co"`
-			O3   float64 `json:"o3"`
-		} `json:"components"`
-	} `json:"list"`
+type OpenMeteoAirQualityResponse struct {
+	Current struct {
+		Time string   `json:"time"`
+		PM25 *float64 `json:"pm2_5"`
+		PM10 *float64 `json:"pm10"`
+	} `json:"current"`
 }
 
-// GetCurrentWeather fetches current weather for Almaty
+// GetCurrentWeather fetches live weather + AQI from Open-Meteo
 func (s *WeatherService) GetCurrentWeather(ctx context.Context) (domain.Weather, error) {
-	// Return mock data if no API key
-	if s.apiKey == "" {
-		return s.getMockWeather(), nil
+	// Check cache first
+	s.mu.RLock()
+	if s.cachedData != nil && time.Now().Before(s.cacheExpiry) {
+		cached := *s.cachedData
+		s.mu.RUnlock()
+		return cached, nil
 	}
+	s.mu.RUnlock()
 
-	url := fmt.Sprintf(
-		"https://api.openweathermap.org/data/2.5/weather?lat=%f&lon=%f&appid=%s&units=metric",
-		domain.AlmatyCenterLat, domain.AlmatyCenterLon, s.apiKey,
-	)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	// Fetch weather from Open-Meteo
+	weather, err := s.fetchOpenMeteoWeather(ctx)
 	if err != nil {
-		return domain.Weather{}, fmt.Errorf("weather: failed to create request: %w", err)
-	}
-
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		// Fallback to mock on network error
-		return s.getMockWeather(), nil
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
+		log.Printf("Open-Meteo weather error, using fallback: %v", err)
 		return s.getMockWeather(), nil
 	}
 
-	var owResp OpenWeatherResponse
-	if err := json.NewDecoder(resp.Body).Decode(&owResp); err != nil {
-		return domain.Weather{}, fmt.Errorf("weather: failed to decode response: %w", err)
-	}
-
-	// OpenWeatherMap returns neighborhood name (e.g. "Gornyy Gigant") for Almaty coords,
-	// so we override with the canonical city name.
-	weather := domain.Weather{
-		Temperature: owResp.Main.Temp,
-		FeelsLike:   owResp.Main.FeelsLike,
-		Humidity:    owResp.Main.Humidity,
-		Pressure:    owResp.Main.Pressure,
-		WindSpeed:   owResp.Wind.Speed,
-		Visibility:  owResp.Visibility,
-		City:        "Almaty",
-		Country:     "KZ",
-		Timestamp:   time.Now(),
-		IsMock:      false,
-	}
-
-	if len(owResp.Weather) > 0 {
-		weather.Description = owResp.Weather[0].Description
-		weather.Icon = owResp.Weather[0].Icon
-	}
-
-	// Fetch real AQI from OpenWeatherMap Air Pollution API
-	if aqi, err := s.getAirQuality(ctx); err == nil {
+	// Fetch AQI from Open-Meteo Air Quality
+	if aqi, err := s.fetchOpenMeteoAQI(ctx); err == nil {
 		weather.AQI = aqi
 	} else {
-		log.Printf("Warning: could not fetch real AQI, using estimate: %v", err)
+		log.Printf("Open-Meteo AQI error, estimating: %v", err)
 		weather.AQI = s.estimateAQI(weather.Temperature)
 	}
+
+	// Cache result
+	s.mu.Lock()
+	s.cachedData = &weather
+	s.cacheExpiry = time.Now().Add(s.cacheTTL)
+	s.mu.Unlock()
+
+	log.Printf("Open-Meteo weather: %.1f°C, humidity=%d%%, AQI=%d, %s",
+		weather.Temperature, weather.Humidity, weather.AQI, weather.Description)
 
 	return weather, nil
 }
 
-// getAirQuality fetches real AQI from OpenWeatherMap Air Pollution API
-func (s *WeatherService) getAirQuality(ctx context.Context) (int, error) {
+// fetchOpenMeteoWeather queries Open-Meteo Forecast API for current conditions
+func (s *WeatherService) fetchOpenMeteoWeather(ctx context.Context) (domain.Weather, error) {
 	url := fmt.Sprintf(
-		"https://api.openweathermap.org/data/2.5/air_pollution?lat=%f&lon=%f&appid=%s",
-		domain.AlmatyCenterLat, domain.AlmatyCenterLon, s.apiKey,
+		"https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,surface_pressure&timezone=Asia%%2FAlmaty",
+		domain.AlmatyCenterLat, domain.AlmatyCenterLon,
 	)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return 0, fmt.Errorf("air_pollution: failed to create request: %w", err)
+		return domain.Weather{}, fmt.Errorf("open-meteo: create request: %w", err)
 	}
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return 0, fmt.Errorf("air_pollution: request failed: %w", err)
+		return domain.Weather{}, fmt.Errorf("open-meteo: request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("air_pollution: API returned status %d", resp.StatusCode)
+		return domain.Weather{}, fmt.Errorf("open-meteo: status %d", resp.StatusCode)
 	}
 
-	var apResp AirPollutionResponse
-	if err := json.NewDecoder(resp.Body).Decode(&apResp); err != nil {
-		return 0, fmt.Errorf("air_pollution: failed to decode: %w", err)
+	var omResp OpenMeteoCurrentResponse
+	if err := json.NewDecoder(resp.Body).Decode(&omResp); err != nil {
+		return domain.Weather{}, fmt.Errorf("open-meteo: decode: %w", err)
 	}
 
-	if len(apResp.List) == 0 {
-		return 0, fmt.Errorf("air_pollution: empty response")
+	c := omResp.Current
+	description, icon := wmoToDescription(c.WeatherCode)
+
+	return domain.Weather{
+		Temperature: math.Round(c.Temperature2m*10) / 10,
+		FeelsLike:   math.Round(c.ApparentTemp*10) / 10,
+		Humidity:    c.RelativeHumidity2m,
+		Description: description,
+		Icon:        icon,
+		WindSpeed:   math.Round(c.WindSpeed10m/3.6*10) / 10, // km/h → m/s
+		Visibility:  10000,
+		Pressure:    int(math.Round(c.SurfacePressure)),
+		City:        "Almaty",
+		Country:     "KZ",
+		Timestamp:   time.Now(),
+		IsMock:      false,
+	}, nil
+}
+
+// fetchOpenMeteoAQI queries Open-Meteo Air Quality API
+func (s *WeatherService) fetchOpenMeteoAQI(ctx context.Context) (int, error) {
+	url := fmt.Sprintf(
+		"https://air-quality-api.open-meteo.com/v1/air-quality?latitude=%.4f&longitude=%.4f&current=pm2_5,pm10&timezone=Asia%%2FAlmaty",
+		domain.AlmatyCenterLat, domain.AlmatyCenterLon,
+	)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return 0, err
 	}
 
-	// Convert PM2.5 concentration to US EPA AQI scale
-	pm25 := apResp.List[0].Components.PM25
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("air-quality: status %d", resp.StatusCode)
+	}
+
+	var aqResp OpenMeteoAirQualityResponse
+	if err := json.NewDecoder(resp.Body).Decode(&aqResp); err != nil {
+		return 0, err
+	}
+
+	if aqResp.Current.PM25 == nil {
+		return 0, fmt.Errorf("air-quality: PM2.5 is null")
+	}
+
+	pm25 := *aqResp.Current.PM25
 	aqi := pm25ToAQI(pm25)
-	log.Printf("Real AQI: PM2.5=%.1f μg/m³ → EPA AQI=%d", pm25, aqi)
-
+	log.Printf("Open-Meteo AQI: PM2.5=%.1f μg/m³ → EPA AQI=%d", pm25, aqi)
 	return aqi, nil
+}
+
+// wmoToDescription converts WMO weather code to description + icon
+func wmoToDescription(code int) (string, string) {
+	switch {
+	case code == 0:
+		return "Clear sky", "01d"
+	case code <= 3:
+		return "Partly cloudy", "02d"
+	case code == 45 || code == 48:
+		return "Fog", "50d"
+	case code >= 51 && code <= 57:
+		return "Drizzle", "09d"
+	case code >= 61 && code <= 67:
+		return "Rain", "10d"
+	case code >= 71 && code <= 77:
+		return "Snow", "13d"
+	case code >= 80 && code <= 82:
+		return "Rain showers", "09d"
+	case code >= 85 && code <= 86:
+		return "Snow showers", "13d"
+	case code >= 95:
+		return "Thunderstorm", "11d"
+	default:
+		return "Cloudy", "04d"
+	}
 }
 
 // pm25ToAQI converts PM2.5 concentration (μg/m³) to US EPA AQI (0-500)

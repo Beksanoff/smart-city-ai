@@ -27,6 +27,11 @@ func NewMLBridge(serviceURL string) *MLBridge {
 	}
 }
 
+// GetServiceURL returns the ML service base URL
+func (b *MLBridge) GetServiceURL() string {
+	return b.serviceURL
+}
+
 // Predict calls the Python ML service for predictions
 func (b *MLBridge) Predict(ctx context.Context, req domain.PredictionRequest) (domain.PredictionResponse, error) {
 	// Prepare request body

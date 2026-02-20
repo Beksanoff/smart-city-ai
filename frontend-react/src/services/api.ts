@@ -188,6 +188,18 @@ export const api = {
             return []
         }
     },
+
+    /**
+     * Get ML stats (correlations, seasonal data)
+     */
+    getStats: async (): Promise<any> => {
+        try {
+            const response = await apiClient.get('/api/v1/stats')
+            return response.data
+        } catch {
+            return null
+        }
+    },
 }
 
 // Mock data functions for development/demo

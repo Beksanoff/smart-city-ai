@@ -22,13 +22,18 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# CORS middleware
+# CORS middleware — restricted to known origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://smartcity-frontend",
+        "http://backend-go:8080",
+    ],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Accept"],
 )
 
 # Initialize prediction service
@@ -82,7 +87,7 @@ async def predict(request: PredictionRequest):
         return result
     except Exception as e:
         logger.error(f"Prediction error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal prediction error")
 
 
 @app.get("/stats")
@@ -93,7 +98,7 @@ async def get_stats():
         return {"success": True, "data": stats}
     except Exception as e:
         logger.error(f"Stats error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal stats error")
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
     Cloud,
@@ -8,6 +8,7 @@ import {
     MapPin
 } from 'lucide-react'
 import { api } from './services/api'
+import type { YandexTrafficScore } from './components/map/AlmatyMap'
 import WeatherWidget from './components/dashboard/WeatherWidget'
 import TrafficWidget from './components/dashboard/TrafficWidget'
 import AQIWidget from './components/dashboard/AQIWidget'
@@ -20,6 +21,7 @@ type TabType = 'monitor' | 'planner' | 'analytics'
 
 function App() {
     const [activeTab, setActiveTab] = useState<TabType>('monitor')
+    const [yandexScore, setYandexScore] = useState<YandexTrafficScore | null>(null)
 
     // Получение данных дашборда
     const { data: dashboardData, isLoading } = useQuery({
@@ -27,6 +29,26 @@ function App() {
         queryFn: api.getDashboard,
         refetchInterval: 30000,
     })
+
+    // Callback: получаем балл пробок от Яндекса через карту
+    const handleTrafficScore = useCallback((score: YandexTrafficScore) => {
+        setYandexScore(score)
+    }, [])
+
+    // Переопределяем данные трафика, используя реальный балл Яндекса
+    const trafficData = useMemo(() => {
+        if (!dashboardData?.traffic) return undefined
+        if (!yandexScore) return dashboardData.traffic
+
+        return {
+            ...dashboardData.traffic,
+            congestion_index: yandexScore.congestionIndex,
+            congestion_level: yandexScore.congestionLevel,
+            average_speed_kmh: yandexScore.averageSpeed,
+            free_flow_speed_kmh: yandexScore.freeFlowSpeed,
+            yandex_score: yandexScore.level,
+        }
+    }, [dashboardData?.traffic, yandexScore])
 
     return (
         <div className="min-h-screen">
@@ -110,7 +132,7 @@ function App() {
                                 isLoading={isLoading}
                             />
                             <TrafficWidget
-                                data={dashboardData?.traffic}
+                                data={trafficData}
                                 isLoading={isLoading}
                             />
                             <AQIWidget
@@ -135,6 +157,7 @@ function App() {
                                 <AlmatyMap
                                     roadSegments={dashboardData?.traffic.road_segments || []}
                                     incidents={dashboardData?.traffic.incidents || []}
+                                    onTrafficScore={handleTrafficScore}
                                 />
                             </div>
                         </div>

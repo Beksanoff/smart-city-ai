@@ -26,5 +26,8 @@ func SetupRoutes(app *fiber.App, dashboardSvc *service.DashboardService, mlBridg
 
 		// Prediction endpoint (proxies to Python ML service)
 		api.Post("/predict", handler.Predict)
+
+		// ML stats endpoint
+		api.Get("/stats", handler.GetStats)
 	}
 }
