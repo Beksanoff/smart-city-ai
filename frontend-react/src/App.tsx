@@ -1,11 +1,13 @@
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import {
     Cloud,
     Car,
     Brain,
     Activity,
-    MapPin
+    MapPin,
+    Globe
 } from 'lucide-react'
 import { api } from './services/api'
 import type { YandexTrafficScore } from './components/map/AlmatyMap'
@@ -17,11 +19,29 @@ import TripPlanner from './components/dashboard/TripPlanner'
 import AnalyticsDashboard from './components/analytics/AnalyticsDashboard'
 import ErrorBoundary from './components/ErrorBoundary'
 
+const LANG_OPTIONS = [
+  { code: 'ru', label: 'Рус' },
+  { code: 'en', label: 'Eng' },
+  { code: 'kk', label: 'Қаз' },
+] as const
+
 type TabType = 'monitor' | 'planner' | 'analytics'
 
 function App() {
+    const { t, i18n } = useTranslation()
     const [activeTab, setActiveTab] = useState<TabType>('monitor')
     const [yandexScore, setYandexScore] = useState<YandexTrafficScore | null>(null)
+
+    useEffect(() => {
+        document.documentElement.lang = i18n.language
+    }, [i18n.language])
+
+    const setLang = (code: string) => {
+        if (code === 'ru' || code === 'en' || code === 'kk') {
+            i18n.changeLanguage(code)
+            try { localStorage.setItem('smartcity_lang', code) } catch {}
+        }
+    }
 
     // Получение данных дашборда
     const { data: dashboardData, isLoading } = useQuery({
@@ -61,23 +81,37 @@ function App() {
                                 <Activity className="w-6 h-6 text-white" />
                             </div>
                             <div>
-                                <h1 className="text-xl font-bold neon-text">Умный Город AI</h1>
+                                <h1 className="text-xl font-bold neon-text">{t('header.title')}</h1>
                                 <p className="text-sm text-cyber-muted flex items-center gap-1">
                                     <MapPin className="w-3 h-3" />
-                                    Система мониторинга Алматы
+                                    {t('header.subtitle')}
                                 </p>
                             </div>
                         </div>
 
-                        {/* Индикатор данных */}
-                        <div className="flex items-center gap-2 text-sm">
-                            <span className="w-2 h-2 rounded-full bg-green-500 live-pulse" />
-                            <span className="text-cyber-muted">Онлайн данные</span>
-                            {dashboardData?.weather.is_mock && (
-                                <span className="text-xs px-2 py-1 rounded bg-yellow-500/20 text-yellow-500">
-                                    Демо режим
-                                </span>
-                            )}
+                        <div className="flex items-center gap-4">
+                            <div className="flex items-center gap-1 rounded-lg border border-cyber-border bg-cyber-dark/50 p-1">
+                                <Globe className="w-4 h-4 text-cyber-muted shrink-0" />
+                                {LANG_OPTIONS.map(({ code, label }) => (
+                                    <button
+                                        key={code}
+                                        type="button"
+                                        onClick={() => setLang(code)}
+                                        className={`px-2 py-1 text-xs font-medium rounded transition-colors ${i18n.language === code ? 'bg-cyber-cyan/20 text-cyber-cyan' : 'text-cyber-muted hover:text-cyber-text'}`}
+                                    >
+                                        {label}
+                                    </button>
+                                ))}
+                            </div>
+                            <div className="flex items-center gap-2 text-sm">
+                                <span className="w-2 h-2 rounded-full bg-green-500 live-pulse" />
+                                <span className="text-cyber-muted">{t('common.onlineData')}</span>
+                                {dashboardData?.weather.is_mock && (
+                                    <span className="text-xs px-2 py-1 rounded bg-yellow-500/20 text-yellow-500">
+                                        {t('common.demoMode')}
+                                    </span>
+                                )}
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -94,8 +128,8 @@ function App() {
                                 : 'border-transparent text-cyber-muted hover:text-cyber-text'
                                 }`}
                         >
-                            <Cloud className="w-4 h-4" />
-                            Мониторинг
+                            <Cloud className="w-4 h-4 shrink-0" />
+                            <span className="truncate">{t('nav.monitor')}</span>
                         </button>
                         <button
                             onClick={() => setActiveTab('analytics')}
@@ -104,8 +138,8 @@ function App() {
                                 : 'border-transparent text-cyber-muted hover:text-cyber-text'
                                 }`}
                         >
-                            <Activity className="w-4 h-4" />
-                            Аналитика
+                            <Activity className="w-4 h-4 shrink-0" />
+                            <span className="truncate">{t('nav.analytics')}</span>
                         </button>
                         <button
                             onClick={() => setActiveTab('planner')}
@@ -114,8 +148,8 @@ function App() {
                                 : 'border-transparent text-cyber-muted hover:text-cyber-text'
                                 }`}
                         >
-                            <Brain className="w-4 h-4" />
-                            Планировщик
+                            <Brain className="w-4 h-4 shrink-0" />
+                            <span className="truncate">{t('nav.planner')}</span>
                         </button>
                     </div>
                 </div>
@@ -144,13 +178,13 @@ function App() {
                         {/* Карта */}
                         <ErrorBoundary>
                         <div className="cyber-card">
-                            <div className="flex items-center justify-between mb-4">
-                                <h2 className="text-lg font-semibold flex items-center gap-2">
-                                    <Car className="w-5 h-5 text-cyber-cyan" />
-                                    Карта трафика Алматы
+                            <div className="flex items-center justify-between mb-4 gap-2 min-w-0">
+                                <h2 className="text-lg font-semibold flex items-center gap-2 truncate min-w-0">
+                                    <Car className="w-5 h-5 text-cyber-cyan shrink-0" />
+                                    {t('map.title')}
                                 </h2>
-                                <span className="text-sm text-cyber-muted">
-                                    {dashboardData?.traffic.road_segments?.length || 0} дорог отслеживается
+                                <span className="text-sm text-cyber-muted shrink-0">
+                                    {t('map.roadsTracked', { count: dashboardData?.traffic.road_segments?.length || 0 })}
                                 </span>
                             </div>
                             <div className="h-[500px] rounded-lg overflow-hidden">
@@ -173,7 +207,7 @@ function App() {
             {/* Подвал */}
             <footer className="border-t border-cyber-border bg-cyber-dark/30 py-6 mt-12">
                 <div className="container mx-auto px-6 text-center text-cyber-muted text-sm">
-                    <p>Умный Город AI • Дипломный проект 2026 • Алматы, Казахстан</p>
+                    <p>{t('footer.text')}</p>
                 </div>
             </footer>
         </div>

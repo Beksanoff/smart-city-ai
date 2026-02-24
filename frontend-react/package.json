@@ -10,17 +10,19 @@
         "lint": "eslint src --ext ts,tsx"
     },
     "dependencies": {
+        "@deck.gl/aggregation-layers": "^8.9.35",
         "@deck.gl/core": "^8.9.35",
         "@deck.gl/layers": "^8.9.35",
-        "@deck.gl/aggregation-layers": "^8.9.35",
         "@deck.gl/react": "^8.9.35",
         "@tanstack/react-query": "^5.17.19",
         "axios": "^1.6.5",
         "clsx": "^2.1.0",
+        "i18next": "^25.8.13",
         "lucide-react": "^0.312.0",
         "maplibre-gl": "^3.6.2",
         "react": "^18.2.0",
         "react-dom": "^18.2.0",
+        "react-i18next": "^16.5.4",
         "react-map-gl": "^7.1.7",
         "recharts": "^2.12.0",
         "tailwind-merge": "^2.2.0"

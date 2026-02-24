@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import {
     ComposedChart,
     Line,
@@ -8,13 +9,14 @@ import {
     YAxis,
     CartesianGrid,
     Tooltip,
-    Legend,
     ResponsiveContainer
 } from 'recharts'
+import { api } from '../../services/api'
+import { Thermometer } from 'lucide-react'
 
 interface StatsData {
-    success: boolean
-    data: {
+    success?: boolean
+    data?: {
         monthly?: Record<string, {
             temp_mean: number
             aqi_mean: number
@@ -23,34 +25,14 @@ interface StatsData {
     }
 }
 
-const MONTH_NAMES = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн',
-    'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек']
-
-// Fallback data (realistic Almaty averages)
-const FALLBACK = [
-    { month: 'Янв', temperature: -8, smog: 172 },
-    { month: 'Фев', temperature: -5, smog: 155 },
-    { month: 'Мар', temperature: 4, smog: 110 },
-    { month: 'Апр', temperature: 13, smog: 72 },
-    { month: 'Май', temperature: 19, smog: 53 },
-    { month: 'Июн', temperature: 24, smog: 38 },
-    { month: 'Июл', temperature: 27, smog: 33 },
-    { month: 'Авг', temperature: 25, smog: 35 },
-    { month: 'Сен', temperature: 19, smog: 48 },
-    { month: 'Окт', temperature: 10, smog: 78 },
-    { month: 'Ноя', temperature: 1, smog: 125 },
-    { month: 'Дек', temperature: -6, smog: 162 },
-]
+const MONTH_KEYS = ['chart.monthJan', 'chart.monthFeb', 'chart.monthMar', 'chart.monthApr', 'chart.monthMay', 'chart.monthJun',
+    'chart.monthJul', 'chart.monthAug', 'chart.monthSep', 'chart.monthOct', 'chart.monthNov', 'chart.monthDec'] as const
 
 export default function CorrelationChart() {
-    const { data: statsResp, isLoading } = useQuery<StatsData>({
+    const { t } = useTranslation()
+    const { data: statsResp, isLoading } = useQuery<StatsData | null>({
         queryKey: ['mlStats'],
-        queryFn: async () => {
-            const resp = await fetch(
-                `${import.meta.env.VITE_API_URL || 'http://localhost:8080'}/api/v1/stats`
-            )
-            return resp.json()
-        },
+        queryFn: () => api.getStats(),
         refetchInterval: 10 * 60_000,
         retry: 1,
     })
@@ -62,36 +44,121 @@ export default function CorrelationChart() {
         return Array.from({ length: 12 }, (_, i) => {
             const m = monthly[String(i + 1)]
             return {
-                month: MONTH_NAMES[i],
+                month: t(MONTH_KEYS[i]),
                 temperature: m ? Math.round(m.temp_mean) : 0,
                 smog: m ? Math.round(m.aqi_mean) : 0,
             }
         })
-    }, [statsResp])
+    }, [statsResp, t])
+
+    const fallbackData = useMemo(() => {
+        const temps = [-8, -5, 4, 13, 19, 24, 27, 25, 19, 10, 1, -6]
+        const smog = [172, 155, 110, 72, 53, 38, 33, 35, 48, 78, 125, 162]
+        return Array.from({ length: 12 }, (_, i) => ({
+            month: t(MONTH_KEYS[i]),
+            temperature: temps[i],
+            smog: smog[i],
+        }))
+    }, [t])
 
     const usingFallback = chartData === null
+    const displayData = chartData || fallbackData
+
+    const CustomTooltip = ({ active, payload, label }: any) => {
+        if (!active || !payload?.length) return null
+        return (
+            <div className="bg-cyber-dark border border-cyber-border rounded-lg px-3 py-2 shadow-lg">
+                <p className="text-xs text-cyber-muted mb-1.5 font-medium">{label}</p>
+                {payload.map((p: any, i: number) => (
+                    <p key={i} className="text-sm" style={{ color: p.color }}>
+                        {p.name}: <span className="font-semibold">{p.value}{p.dataKey === 'temperature' ? '°C' : ''}</span>
+                    </p>
+                ))}
+            </div>
+        )
+    }
 
     return (
-        <div className="cyber-card h-[300px]">
-            <h3 className="text-lg font-semibold mb-4 text-cyber-text">
-                Корреляция: Температура vs Смог
-                {isLoading && <span className="text-xs text-cyber-muted ml-2">загрузка…</span>}
-                {usingFallback && !isLoading && <span className="text-xs text-yellow-500 ml-2">средние за 6 лет</span>}
-            </h3>
-            <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={chartData || FALLBACK}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#2a2a35" />
-                    <XAxis dataKey="month" stroke="#6b7280" />
-                    <YAxis yAxisId="left" stroke="#8b5cf6" label={{ value: 'Смог (AQI)', angle: -90, position: 'insideLeft', fill: '#8b5cf6' }} />
-                    <YAxis yAxisId="right" orientation="right" stroke="#f59e0b" label={{ value: 'Температура (°C)', angle: 90, position: 'insideRight', fill: '#f59e0b' }} />
-                    <Tooltip
-                        contentStyle={{ backgroundColor: '#09090b', borderColor: '#27272a', color: '#fff' }}
-                    />
-                    <Legend />
-                    <Bar yAxisId="left" dataKey="smog" barSize={20} fill="#8b5cf6" name="Смог (AQI)" radius={[4, 4, 0, 0]} />
-                    <Line yAxisId="right" type="monotone" dataKey="temperature" stroke="#f59e0b" strokeWidth={3} name="Температура" dot={{ fill: '#f59e0b' }} />
-                </ComposedChart>
-            </ResponsiveContainer>
+        <div className="cyber-card flex flex-col overflow-hidden">
+            <div className="flex items-start gap-3 mb-4">
+                <div className="w-9 h-9 rounded-lg bg-orange-500/10 flex items-center justify-center shrink-0">
+                    <Thermometer className="w-5 h-5 text-orange-400" />
+                </div>
+                <div className="min-w-0 flex-1">
+                    <h3 className="text-base font-semibold text-cyber-text truncate">
+                        {t('analytics.correlationTitle')}
+                    </h3>
+                    <p className="text-xs text-cyber-muted mt-0.5 leading-relaxed">
+                        {t('analytics.correlationDescription')}
+                    </p>
+                </div>
+            </div>
+
+            {/* Custom legend */}
+            <div className="flex flex-wrap gap-x-5 gap-y-1 mb-3 text-[11px]">
+                <span className="flex items-center gap-1.5">
+                    <span className="w-3 h-3 rounded-sm shrink-0" style={{ background: '#8b5cf6' }} />
+                    {t('chart.smogAqi')}
+                </span>
+                <span className="flex items-center gap-1.5">
+                    <span className="w-5 h-[3px] rounded-full shrink-0" style={{ background: '#f59e0b' }} />
+                    {t('chart.temperature')}
+                </span>
+                {usingFallback && !isLoading && (
+                    <span className="text-yellow-500 ml-auto">
+                        ⚠ {t('analytics.correlationFallback')}
+                    </span>
+                )}
+            </div>
+
+            {isLoading && (
+                <div className="mb-2">
+                    <span className="text-xs text-cyber-muted animate-pulse">{t('common.loading')}</span>
+                </div>
+            )}
+
+            <div className="h-[320px]">
+                <ResponsiveContainer width="100%" height="100%">
+                    <ComposedChart data={displayData} margin={{ top: 5, right: 35, left: 0, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#1f1f2e" />
+                        <XAxis dataKey="month" stroke="#6b7280" tick={{ fontSize: 11 }} interval={0} />
+                        <YAxis
+                            yAxisId="left"
+                            stroke="#8b5cf6"
+                            tick={{ fontSize: 11 }}
+                            width={40}
+                        />
+                        <YAxis
+                            yAxisId="right"
+                            orientation="right"
+                            stroke="#f59e0b"
+                            tick={{ fontSize: 11 }}
+                            width={40}
+                            tickFormatter={(v) => `${v}°`}
+                        />
+                        <Tooltip content={<CustomTooltip />} />
+                        <Bar
+                            yAxisId="left"
+                            dataKey="smog"
+                            barSize={18}
+                            fill="#8b5cf6"
+                            name={t('chart.smogAqi')}
+                            radius={[3, 3, 0, 0]}
+                            fillOpacity={0.8}
+                        />
+                        <Line
+                            yAxisId="right"
+                            type="monotone"
+                            dataKey="temperature"
+                            stroke="#f59e0b"
+                            strokeWidth={2.5}
+                            name={t('chart.temperature')}
+                            dot={{ fill: '#f59e0b', r: 3, strokeWidth: 0 }}
+                            activeDot={{ r: 5, stroke: '#f59e0b', strokeWidth: 2, fill: '#0a0a0f' }}
+                        />
+                    </ComposedChart>
+                </ResponsiveContainer>
+            </div>
         </div>
     )
 }

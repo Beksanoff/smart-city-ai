@@ -66,6 +66,7 @@ export interface PredictionRequest {
     date?: string
     temperature?: number
     query?: string
+    language?: string
 }
 
 export interface PredictionResponse {

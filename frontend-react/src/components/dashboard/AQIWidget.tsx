@@ -1,4 +1,5 @@
 import { Wind, Shield, AlertCircle, Skull } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
 interface AQIWidgetProps {
     aqi?: number
@@ -6,6 +7,8 @@ interface AQIWidgetProps {
 }
 
 function AQIWidget({ aqi, isLoading }: AQIWidgetProps) {
+    const { t } = useTranslation()
+
     if (isLoading || aqi === undefined) {
         return (
             <div className="cyber-card animate-pulse">
@@ -16,61 +19,60 @@ function AQIWidget({ aqi, isLoading }: AQIWidgetProps) {
 
     const getAQIInfo = (value: number) => {
         if (value <= 50) return {
-            level: 'Хорошее',
+            levelKey: 'aqi.good' as const,
             color: 'aqi-good',
             bg: 'bg-green-500/20',
             icon: Shield,
-            advice: 'Качество воздуха отличное'
+            adviceKey: 'aqi.adviceGood' as const,
         }
         if (value <= 100) return {
-            level: 'Умеренное',
+            levelKey: 'aqi.moderate' as const,
             color: 'aqi-moderate',
             bg: 'bg-yellow-500/20',
             icon: Wind,
-            advice: 'Приемлемо для большинства людей'
+            adviceKey: 'aqi.adviceModerate' as const,
         }
         if (value <= 150) return {
-            level: 'Вредное для чувствительных',
+            levelKey: 'aqi.unhealthySensitive' as const,
             color: 'aqi-usg',
             bg: 'bg-orange-500/20',
             icon: AlertCircle,
-            advice: 'Чувствительным группам ограничить нагрузки'
+            adviceKey: 'aqi.adviceUSG' as const,
         }
         if (value <= 200) return {
-            level: 'Вредное',
+            levelKey: 'aqi.unhealthy' as const,
             color: 'aqi-unhealthy',
             bg: 'bg-red-500/20',
             icon: AlertCircle,
-            advice: 'Возможно влияние на здоровье всех'
+            adviceKey: 'aqi.adviceUnhealthy' as const,
         }
         if (value <= 300) return {
-            level: 'Очень вредное',
+            levelKey: 'aqi.veryUnhealthy' as const,
             color: 'aqi-very-unhealthy',
             bg: 'bg-purple-500/20',
             icon: Skull,
-            advice: 'Тревога: серьезный риск для здоровья'
+            adviceKey: 'aqi.adviceVery' as const,
         }
         return {
-            level: 'Опасное',
+            levelKey: 'aqi.hazardous' as const,
             color: 'aqi-hazardous',
             bg: 'bg-red-900/20',
             icon: Skull,
-            advice: 'Чрезвычайная ситуация!'
+            adviceKey: 'aqi.adviceHazardous' as const,
         }
     }
 
     const info = getAQIInfo(aqi)
     const Icon = info.icon
 
-    // Расчет угла поворота (0-300 AQI = 0-180 градусов)
     const rotation = Math.min((aqi / 300) * 180, 180)
 
     return (
         <div className="cyber-card">
-            <div className="flex items-start justify-between mb-4">
-                <div>
-                    <h3 className="text-sm text-cyber-muted mb-1">Индекс качества воздуха</h3>
-                    <p className={`font-semibold ${info.color}`}>{info.level}</p>
+            <div className="flex items-start justify-between mb-4 gap-2 min-w-0">
+                <div className="min-w-0">
+                    <h3 className="text-sm text-cyber-muted mb-1">{t('aqi.title')}</h3>
+                    <p className={`font-semibold truncate ${info.color}`}>{t(info.levelKey)}</p>
                 </div>
                 <div className={`w-12 h-12 rounded-lg ${info.bg} flex items-center justify-center`}>
                     <Icon className={`w-6 h-6 ${info.color}`} />
@@ -99,7 +101,7 @@ function AQIWidget({ aqi, isLoading }: AQIWidgetProps) {
                 </div>
             </div>
 
-            <p className="text-sm text-cyber-muted text-center">{info.advice}</p>
+            <p className="text-sm text-cyber-muted text-center break-words">{t(info.adviceKey)}</p>
 
             {/* Легенда шкалы AQI */}
             <div className="mt-4 flex justify-between text-xs">

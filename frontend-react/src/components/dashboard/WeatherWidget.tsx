@@ -1,4 +1,5 @@
 import { Thermometer, Droplets, Wind, Eye } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import type { Weather } from '../../services/api'
 
 interface WeatherWidgetProps {
@@ -7,6 +8,8 @@ interface WeatherWidgetProps {
 }
 
 function WeatherWidget({ data, isLoading }: WeatherWidgetProps) {
+    const { t } = useTranslation()
+
     if (isLoading || !data) {
         return (
             <div className="cyber-card animate-pulse">
@@ -26,31 +29,19 @@ function WeatherWidget({ data, isLoading }: WeatherWidgetProps) {
     }
 
     const translateDescription = (desc: string) => {
-        const translations: Record<string, string> = {
-            'clear sky': 'Ясно',
-            'few clouds': 'Малооблачно',
-            'scattered clouds': 'Переменная облачность',
-            'broken clouds': 'Облачно',
-            'overcast clouds': 'Пасмурно',
-            'light rain': 'Небольшой дождь',
-            'moderate rain': 'Умеренный дождь',
-            'heavy rain': 'Сильный дождь',
-            'light snow': 'Небольшой снег',
-            'snow': 'Снег',
-            'fog': 'Туман',
-            'mist': 'Дымка',
-        }
-        return translations[desc.toLowerCase()] || desc
+        const key = `weatherDesc.${desc.toLowerCase()}`
+        const translated = t(key)
+        return translated !== key ? translated : desc
     }
 
     return (
         <div className="cyber-card">
             <div className="flex items-start justify-between mb-4">
-                <div>
-                    <h3 className="text-sm text-cyber-muted mb-1">Погода</h3>
-                    <p className="text-sm text-cyber-muted">{data.city}, Казахстан</p>
+                <div className="min-w-0">
+                    <h3 className="text-sm text-cyber-muted mb-1">{t('weather.title')}</h3>
+                    <p className="text-sm text-cyber-muted truncate">{t('weather.cityCountry', { city: data.city })}</p>
                 </div>
-                <span className="text-4xl">{getWeatherIcon(data.description)}</span>
+                <span className="text-4xl shrink-0">{getWeatherIcon(data.description)}</span>
             </div>
 
             <div className="flex items-end gap-2 mb-4">
@@ -60,28 +51,28 @@ function WeatherWidget({ data, isLoading }: WeatherWidgetProps) {
                 <span className="text-lg text-cyber-muted mb-2">C</span>
             </div>
 
-            <p className="text-cyber-text capitalize mb-6">{translateDescription(data.description)}</p>
+            <p className="text-cyber-text capitalize mb-6 break-words">{translateDescription(data.description)}</p>
 
             <div className="grid grid-cols-2 gap-4 text-sm">
-                <div className="flex items-center gap-2">
-                    <Thermometer className="w-4 h-4 text-cyber-cyan" />
-                    <span className="text-cyber-muted">Ощущается</span>
-                    <span className="ml-auto">{Math.round(data.feels_like)}°C</span>
+                <div className="flex items-center gap-2 min-w-0">
+                    <Thermometer className="w-4 h-4 text-cyber-cyan shrink-0" />
+                    <span className="text-cyber-muted truncate">{t('weather.feelsLike')}</span>
+                    <span className="ml-auto shrink-0">{Math.round(data.feels_like)}°C</span>
                 </div>
-                <div className="flex items-center gap-2">
-                    <Droplets className="w-4 h-4 text-cyber-purple" />
-                    <span className="text-cyber-muted">Влажность</span>
-                    <span className="ml-auto">{data.humidity}%</span>
+                <div className="flex items-center gap-2 min-w-0">
+                    <Droplets className="w-4 h-4 text-cyber-purple shrink-0" />
+                    <span className="text-cyber-muted truncate">{t('weather.humidity')}</span>
+                    <span className="ml-auto shrink-0">{data.humidity}%</span>
                 </div>
-                <div className="flex items-center gap-2">
-                    <Wind className="w-4 h-4 text-cyber-cyan" />
-                    <span className="text-cyber-muted">Ветер</span>
-                    <span className="ml-auto">{data.wind_speed} м/с</span>
+                <div className="flex items-center gap-2 min-w-0">
+                    <Wind className="w-4 h-4 text-cyber-cyan shrink-0" />
+                    <span className="text-cyber-muted truncate">{t('weather.wind')}</span>
+                    <span className="ml-auto shrink-0">{data.wind_speed} {t('weather.ms')}</span>
                 </div>
-                <div className="flex items-center gap-2">
-                    <Eye className="w-4 h-4 text-cyber-purple" />
-                    <span className="text-cyber-muted">Видимость</span>
-                    <span className="ml-auto">{(data.visibility / 1000).toFixed(1)} км</span>
+                <div className="flex items-center gap-2 min-w-0">
+                    <Eye className="w-4 h-4 text-cyber-purple shrink-0" />
+                    <span className="text-cyber-muted truncate">{t('weather.visibility')}</span>
+                    <span className="ml-auto shrink-0">{(data.visibility / 1000).toFixed(1)} {t('weather.km')}</span>
                 </div>
             </div>
         </div>

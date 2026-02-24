@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import type { Incident } from '../../services/api'
 
 /** Yandex traffic score payload sent via onTrafficScore callback */
@@ -34,7 +35,11 @@ let ymapsPromise: Promise<void> | null = null
 /**
  * Load Yandex Maps JS API v2.1 once, return a Promise that resolves when ymaps.ready() fires.
  */
-function loadYandexMaps(): Promise<void> {
+function loadYandexMaps(lang: string = 'ru'): Promise<void> {
+    // Map i18n codes to Yandex lang codes
+    const langMap: Record<string, string> = { ru: 'ru_RU', en: 'en_US', kk: 'ru_RU' }
+    const ymLang = langMap[lang] || 'ru_RU'
+
     if (ymapsPromise) return ymapsPromise
 
     ymapsPromise = new Promise((resolve, reject) => {
@@ -46,7 +51,7 @@ function loadYandexMaps(): Promise<void> {
 
         const script = document.createElement('script')
         const keyPart = YANDEX_API_KEY ? `apikey=${YANDEX_API_KEY}&` : ''
-        script.src = `https://api-maps.yandex.ru/2.1/?${keyPart}lang=ru_RU`
+        script.src = `https://api-maps.yandex.ru/2.1/?${keyPart}lang=${ymLang}`
         script.async = true
         script.onload = () => {
             window.ymaps.ready(resolve)
@@ -70,12 +75,12 @@ function incidentEmoji(type: string): string {
     }
 }
 
-function incidentLabel(type: string): string {
+function getIncidentLabelKey(type: string): 'map.accident' | 'map.roadwork' | 'map.police' | 'map.event' {
     switch (type) {
-        case 'accident': return 'ДТП'
-        case 'roadwork': return 'Ремонт дороги'
-        case 'police': return 'Полиция'
-        default: return 'Событие'
+        case 'accident': return 'map.accident'
+        case 'roadwork': return 'map.roadwork'
+        case 'police': return 'map.police'
+        default: return 'map.event'
     }
 }
 
@@ -111,6 +116,7 @@ function yandexScoreToMetrics(level: number): YandexTrafficScore {
 }
 
 function AlmatyMap({ roadSegments: _roadSegments, incidents = [], onTrafficScore }: AlmatyMapProps) {
+    const { t, i18n } = useTranslation()
     const containerRef = useRef<HTMLDivElement>(null)
     const mapRef = useRef<any>(null)
     const incidentsCollectionRef = useRef<any>(null)
@@ -123,7 +129,7 @@ function AlmatyMap({ roadSegments: _roadSegments, incidents = [], onTrafficScore
     useEffect(() => {
         let destroyed = false
 
-        loadYandexMaps()
+        loadYandexMaps(i18n.language)
             .then(() => {
                 if (destroyed || !containerRef.current) return
                 if (mapRef.current) return // already created
@@ -171,7 +177,7 @@ function AlmatyMap({ roadSegments: _roadSegments, incidents = [], onTrafficScore
             })
             .catch((err) => {
                 if (!destroyed) {
-                    setLoadError(err?.message || 'Ошибка загрузки карты')
+                    setLoadError(err?.message || t('map.loadError'))
                 }
             })
 
@@ -192,11 +198,12 @@ function AlmatyMap({ roadSegments: _roadSegments, incidents = [], onTrafficScore
         collection.removeAll()
 
         incidents.forEach((inc) => {
+            const label = t(getIncidentLabelKey(inc.type))
             const placemark = new window.ymaps.Placemark(
                 [inc.lat, inc.lon],
                 {
-                    iconCaption: incidentLabel(inc.type),
-                    balloonContentHeader: `${incidentEmoji(inc.type)} ${incidentLabel(inc.type)}`,
+                    iconCaption: label,
+                    balloonContentHeader: `${incidentEmoji(inc.type)} ${label}`,
                     balloonContentBody: inc.description,
                 },
                 {
@@ -209,7 +216,7 @@ function AlmatyMap({ roadSegments: _roadSegments, incidents = [], onTrafficScore
             )
             collection.add(placemark)
         })
-    }, [incidents, mapReady])
+    }, [incidents, mapReady, t])
 
     useEffect(() => {
         updateIncidents()
@@ -219,10 +226,10 @@ function AlmatyMap({ roadSegments: _roadSegments, incidents = [], onTrafficScore
     if (loadError) {
         return (
             <div className="relative w-full h-full rounded-lg overflow-hidden flex items-center justify-center bg-cyber-dark">
-                <div className="text-center">
-                    <p className="text-red-400 text-sm mb-2">⚠️ {loadError}</p>
-                    <p className="text-cyber-muted text-xs">
-                        Проверьте VITE_YANDEX_MAPS_API_KEY в настройках
+                <div className="text-center px-4">
+                    <p className="text-red-400 text-sm mb-2 break-words">⚠️ {loadError}</p>
+                    <p className="text-cyber-muted text-xs break-words">
+                        {t('map.checkApiKey')}
                     </p>
                 </div>
             </div>
@@ -237,41 +244,39 @@ function AlmatyMap({ roadSegments: _roadSegments, incidents = [], onTrafficScore
             {/* Заголовок карты */}
             <div className="absolute top-4 left-4 bg-cyber-dark/80 backdrop-blur-sm rounded-lg px-4 py-2 border border-cyber-border z-10 pointer-events-none">
                 <div className="flex items-center gap-2 text-sm">
-                    <span className="w-2 h-2 rounded-full bg-cyber-cyan live-pulse" />
-                    <span className="text-cyber-muted">Яндекс Карты — трафик в реальном времени</span>
+                    <span className="w-2 h-2 rounded-full bg-cyber-cyan live-pulse shrink-0" />
+                    <span className="text-cyber-muted truncate">{t('map.yandexLive')}</span>
                 </div>
             </div>
 
-            {/* Легенда */}
-            <div className="absolute bottom-4 right-4 bg-cyber-dark/80 backdrop-blur-sm rounded-lg p-3 border border-cyber-border z-10 pointer-events-none">
-                <p className="text-xs text-cyber-muted mb-2 font-medium">Загруженность дорог (Яндекс)</p>
+            <div className="absolute bottom-4 right-4 bg-cyber-dark/80 backdrop-blur-sm rounded-lg p-3 border border-cyber-border z-10 pointer-events-none max-w-[220px]">
+                <p className="text-xs text-cyber-muted mb-2 font-medium truncate">{t('map.congestionLegend')}</p>
                 <div className="flex items-center gap-1">
-                    <div className="w-8 h-[5px] rounded-full" style={{ background: '#20b020' }} />
-                    <div className="w-8 h-[5px] rounded-full" style={{ background: '#ffd500' }} />
-                    <div className="w-8 h-[5px] rounded-full" style={{ background: '#ff5500' }} />
-                    <div className="w-8 h-[5px] rounded-full" style={{ background: '#b00000' }} />
+                    <div className="w-8 h-[5px] rounded-full shrink-0" style={{ background: '#20b020' }} />
+                    <div className="w-8 h-[5px] rounded-full shrink-0" style={{ background: '#ffd500' }} />
+                    <div className="w-8 h-[5px] rounded-full shrink-0" style={{ background: '#ff5500' }} />
+                    <div className="w-8 h-[5px] rounded-full shrink-0" style={{ background: '#b00000' }} />
                 </div>
                 <div className="flex justify-between text-[10px] text-cyber-muted mt-1">
-                    <span>Свободно</span>
-                    <span>Пробка</span>
+                    <span>{t('map.freeFlow')}</span>
+                    <span>{t('map.jam')}</span>
                 </div>
 
                 {incidents.length > 0 && (
                     <>
                         <div className="border-t border-cyber-border my-2" />
-                        <p className="text-xs text-cyber-muted mb-1 font-medium">Инциденты (TomTom)</p>
+                        <p className="text-xs text-cyber-muted mb-1 font-medium truncate">{t('map.incidentsTomTom')}</p>
                         <div className="flex flex-col gap-1 text-[11px]">
-                            <span>🚨 ДТП</span>
-                            <span>🚧 Ремонт дороги</span>
-                            <span>👮 Полиция</span>
+                            <span>🚨 {t('map.accident')}</span>
+                            <span>🚧 {t('map.roadwork')}</span>
+                            <span>👮 {t('map.police')}</span>
                         </div>
                     </>
                 )}
             </div>
 
-            {/* Счётчик инцидентов */}
-            <div className="absolute bottom-4 left-4 text-xs text-cyber-muted font-mono z-10 pointer-events-none">
-                🚦 Трафик Яндекс • {incidents.length} инцидентов TomTom
+            <div className="absolute bottom-4 left-4 text-xs text-cyber-muted font-mono z-10 pointer-events-none truncate max-w-full">
+                🚦 {t('map.trafficYandexIncidents', { count: incidents.length })}
             </div>
         </div>
     )

@@ -1,4 +1,5 @@
 import { Car, AlertTriangle, Gauge, TrendingDown } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import type { Traffic } from '../../services/api'
 
 interface TrafficData extends Traffic {
@@ -11,6 +12,8 @@ interface TrafficWidgetProps {
 }
 
 function TrafficWidget({ data, isLoading }: TrafficWidgetProps) {
+    const { t } = useTranslation()
+
     if (isLoading || !data) {
         return (
             <div className="cyber-card animate-pulse">
@@ -20,14 +23,9 @@ function TrafficWidget({ data, isLoading }: TrafficWidgetProps) {
     }
 
     const translateLevel = (level: string) => {
-        const translations: Record<string, string> = {
-            'free flow': 'Свободно',
-            'light': 'Легкие пробки',
-            'moderate': 'Умеренные пробки',
-            'heavy': 'Сильные пробки',
-            'severe': 'Критические пробки',
-        }
-        return translations[level.toLowerCase()] || level
+        const key = `trafficLevel.${level.toLowerCase()}` as keyof typeof t
+        const translated = t(key as 'trafficLevel.light')
+        return typeof translated === 'string' && translated !== key ? translated : level
     }
 
     const getTrafficColor = (level: string) => {
@@ -51,24 +49,24 @@ function TrafficWidget({ data, isLoading }: TrafficWidgetProps) {
 
     return (
         <div className="cyber-card">
-            <div className="flex items-start justify-between mb-4">
-                <div>
-                    <h3 className="text-sm text-cyber-muted mb-1">Трафик</h3>
-                    <p className={`font-semibold ${getTrafficColor(data.congestion_level)}`}>
+            <div className="flex items-start justify-between mb-4 gap-2 min-w-0">
+                <div className="min-w-0">
+                    <h3 className="text-sm text-cyber-muted mb-1">{t('traffic.title')}</h3>
+                    <p className={`font-semibold truncate ${getTrafficColor(data.congestion_level)}`}>
                         {translateLevel(data.congestion_level)}
                     </p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 shrink-0">
                     {data.yandex_score != null && (
                         <div className="flex flex-col items-center">
-                            <span className="text-[10px] text-cyber-muted">Яндекс</span>
+                            <span className="text-[10px] text-cyber-muted">{t('traffic.yandex')}</span>
                             <span className={`text-lg font-bold font-mono ${
                                 data.yandex_score <= 3 ? 'text-green-400' :
                                 data.yandex_score <= 6 ? 'text-yellow-400' :
                                 data.yandex_score <= 8 ? 'text-orange-400' :
                                 'text-red-400'
                             }`}>{data.yandex_score}</span>
-                            <span className="text-[10px] text-cyber-muted">баллов</span>
+                            <span className="text-[10px] text-cyber-muted">{t('traffic.points')}</span>
                         </div>
                     )}
                     <div className="w-12 h-12 rounded-lg bg-cyber-border flex items-center justify-center">
@@ -79,9 +77,9 @@ function TrafficWidget({ data, isLoading }: TrafficWidgetProps) {
 
             {/* Индекс загруженности */}
             <div className="mb-6">
-                <div className="flex justify-between text-sm mb-2">
-                    <span className="text-cyber-muted">Индекс загруженности</span>
-                    <span className="font-mono font-bold text-cyber-cyan">
+                <div className="flex justify-between text-sm mb-2 gap-2 min-w-0">
+                    <span className="text-cyber-muted truncate">{t('traffic.congestionIndex')}</span>
+                    <span className="font-mono font-bold text-cyber-cyan shrink-0">
                         {Math.round(data.congestion_index)}%
                     </span>
                 </div>
@@ -94,31 +92,25 @@ function TrafficWidget({ data, isLoading }: TrafficWidgetProps) {
             </div>
 
             <div className="grid grid-cols-2 gap-4 text-sm">
-                <div className="flex items-center gap-2">
-                    <Gauge className="w-4 h-4 text-cyber-cyan" />
-                    <span className="text-cyber-muted">Ср. скорость</span>
-                    <span className="ml-auto">{Math.round(data.average_speed_kmh)} км/ч</span>
+                <div className="flex items-center gap-2 min-w-0">
+                    <Gauge className="w-4 h-4 text-cyber-cyan shrink-0" />
+                    <span className="text-cyber-muted truncate">{t('traffic.avgSpeed')}</span>
+                    <span className="ml-auto shrink-0">{Math.round(data.average_speed_kmh)} {t('traffic.kmh')}</span>
                 </div>
-                <div className="flex items-center gap-2">
-                    <TrendingDown className="w-4 h-4 text-cyber-purple" />
-                    <span className="text-cyber-muted">Норма</span>
-                    <span className="ml-auto">{data.free_flow_speed_kmh} км/ч</span>
+                <div className="flex items-center gap-2 min-w-0">
+                    <TrendingDown className="w-4 h-4 text-cyber-purple shrink-0" />
+                    <span className="text-cyber-muted truncate">{t('traffic.norm')}</span>
+                    <span className="ml-auto shrink-0">{data.free_flow_speed_kmh} {t('traffic.kmh')}</span>
                 </div>
-                <div className="flex items-center gap-2 col-span-2">
-                    <AlertTriangle className="w-4 h-4 text-yellow-500" />
-                    <span className="text-cyber-muted">Инциденты</span>
-                    <span className="ml-auto">{data.incident_count} зарегистрировано</span>
+                <div className="flex items-center gap-2 col-span-2 min-w-0">
+                    <AlertTriangle className="w-4 h-4 text-yellow-500 shrink-0" />
+                    <span className="text-cyber-muted truncate">{t('traffic.incidents')}</span>
+                    <span className="ml-auto shrink-0">{t('traffic.incidentsCount', { count: data.incident_count })}</span>
                 </div>
             </div>
 
-            {/* Источник данных */}
-            <div className="mt-4 pt-3 border-t border-cyber-border text-[11px] text-cyber-muted">
-                {data.yandex_score != null
-                    ? '📊 Данные: Яндекс Карты (реальное время)'
-                    : data.is_mock
-                        ? '⚠️ Данные: симуляция (нет API-ключа)'
-                        : '📊 Данные: TomTom Traffic Flow'
-                }
+            <div className="mt-4 pt-3 border-t border-cyber-border text-[11px] text-cyber-muted break-words">
+                {data.yandex_score != null ? t('traffic.dataYandex') : data.is_mock ? t('traffic.dataSimulation') : t('traffic.dataTomTom')}
             </div>
         </div>
     )

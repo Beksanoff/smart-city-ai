@@ -11,6 +11,7 @@ numpy==1.26.3
 
 # AI/ML
 groq==0.4.2
+scikit-learn==1.4.0
 
 # HTTP client
 httpx==0.26.0

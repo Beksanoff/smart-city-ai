@@ -1,6 +1,9 @@
 """
-Smart City AI Core - ML Service
-FastAPI application for AI predictions using Groq and historical data analysis.
+Smart City AI Core — ML Service v2.0
+FastAPI application with:
+- Real ML models (GradientBoosting + RandomForest) trained on 2234 days
+- Open-Meteo 3-day forecast integration
+- Enhanced Groq LLM with live data context
 """
 
 from fastapi import FastAPI, HTTPException
@@ -18,8 +21,8 @@ logger = logging.getLogger(__name__)
 # Initialize FastAPI app
 app = FastAPI(
     title="SmartCity ML Service",
-    description="AI-powered predictions for Almaty urban monitoring",
-    version="1.0.0",
+    description="AI-powered predictions with real ML models for Almaty urban monitoring",
+    version="2.0.0",
 )
 
 # CORS middleware — restricted to known origins
@@ -36,15 +39,27 @@ app.add_middleware(
     allow_headers=["Content-Type", "Accept"],
 )
 
-# Initialize prediction service
+# Initialize prediction service (trains ML models on startup)
 prediction_service = PredictionService()
 
 
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Clean up resources on shutdown."""
+    prediction_service.forecast_service.close()
+    logger.info("Forecast HTTP client closed")
+
+
 class PredictionRequest(BaseModel):
-    """Request model for predictions"""
+    """Request model for predictions — now accepts live data from backend."""
     date: Optional[str] = None
     temperature: Optional[float] = None
     query: Optional[str] = None
+    language: Optional[str] = None
+    # Live data fields (sent by Go backend)
+    live_aqi: Optional[int] = None
+    live_traffic: Optional[float] = None
+    live_temp: Optional[float] = None
 
 
 class PredictionResponse(BaseModel):
@@ -59,11 +74,14 @@ class PredictionResponse(BaseModel):
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
+    """Health check endpoint with ML model status."""
+    ml_info = prediction_service.ml_model.get_info()
     return {
         "status": "ok",
         "service": "smartcity-ml",
-        "version": "1.0.0"
+        "version": "2.0.0",
+        "ml_model_trained": ml_info["is_trained"],
+        "sklearn_available": ml_info["sklearn_available"],
     }
 
 
@@ -72,17 +90,23 @@ async def predict(request: PredictionRequest):
     """
     Generate AI prediction for Almaty urban conditions.
     
-    Uses:
-    - Historical CSV data correlation
-    - Almaty-specific seasonal patterns
-    - Groq LLM for natural language insights
+    Enhanced with:
+    - Real ML models (GradientBoosting + RandomForest)
+    - Open-Meteo 3-day forecast
+    - Live data context (AQI/traffic from Go backend)
+    - Adaptive Groq LLM prompt
     """
     try:
-        logger.info(f"Prediction request: {request}")
+        logger.info(f"Prediction request: date={request.date}, temp={request.temperature}, "
+                     f"lang={request.language}, live_aqi={request.live_aqi}, live_traffic={request.live_traffic}")
         result = await prediction_service.predict(
             date=request.date,
             temperature=request.temperature,
-            query=request.query
+            query=request.query,
+            language=request.language,
+            live_aqi=request.live_aqi,
+            live_traffic=request.live_traffic,
+            live_temp=request.live_temp,
         )
         return result
     except Exception as e:
@@ -92,13 +116,39 @@ async def predict(request: PredictionRequest):
 
 @app.get("/stats")
 async def get_stats():
-    """Get historical data statistics"""
+    """Get historical data statistics + ML model metrics."""
     try:
         stats = prediction_service.get_data_stats()
         return {"success": True, "data": stats}
     except Exception as e:
         logger.error(f"Stats error: {e}")
         raise HTTPException(status_code=500, detail="Internal stats error")
+
+
+@app.get("/model/info")
+async def model_info():
+    """Get ML model training metrics, feature importance, and status."""
+    try:
+        info = prediction_service.ml_model.get_info()
+        return {"success": True, "data": info}
+    except Exception as e:
+        logger.error(f"Model info error: {e}")
+        raise HTTPException(status_code=500, detail="Internal error")
+
+
+@app.post("/model/retrain")
+async def retrain_model():
+    """Re-train ML models from CSV data. Useful after data updates."""
+    try:
+        if prediction_service.df is None:
+            raise HTTPException(status_code=400, detail="No data available")
+        metrics = prediction_service.ml_model.train(prediction_service.df)
+        return {"success": True, "data": metrics}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Retrain error: {e}")
+        raise HTTPException(status_code=500, detail="Training failed")
 
 
 if __name__ == "__main__":

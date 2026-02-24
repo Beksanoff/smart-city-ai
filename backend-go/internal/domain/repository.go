@@ -14,9 +14,14 @@ type DashboardData struct {
 
 // PredictionRequest represents input for AI prediction
 type PredictionRequest struct {
-	Date        string  `json:"date"`
-	Temperature float64 `json:"temperature,omitempty"`
-	Query       string  `json:"query,omitempty"`
+	Date        string   `json:"date"`
+	Temperature *float64 `json:"temperature,omitempty"`
+	Query       string   `json:"query,omitempty"`
+	Language    string   `json:"language,omitempty"`
+	// Live data fields — enriched by Go backend before sending to ML service
+	LiveAQI     *int     `json:"live_aqi,omitempty"`
+	LiveTraffic *float64 `json:"live_traffic,omitempty"`
+	LiveTemp    *float64 `json:"live_temp,omitempty"`
 }
 
 // PredictionResponse represents AI prediction output

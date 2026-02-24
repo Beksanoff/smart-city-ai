@@ -94,7 +94,7 @@ func (h *Handler) Predict(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
 	}
 
-	// Validation
+	// Validation: use pointer/flag to distinguish 0°C from "not provided"
 	if req.Query != "" && len(req.Query) > 1000 {
 		return fiber.NewError(fiber.StatusBadRequest, "Query too long (max 1000 characters)")
 	}
@@ -104,8 +104,21 @@ func (h *Handler) Predict(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusBadRequest, "Date must be in YYYY-MM-DD format")
 		}
 	}
-	if req.Temperature != 0 && (req.Temperature < -50 || req.Temperature > 55) {
-		return fiber.NewError(fiber.StatusBadRequest, "Temperature must be between -50 and 55")
+	if req.Temperature != nil && (*req.Temperature < -50 || *req.Temperature > 60) {
+		return fiber.NewError(fiber.StatusBadRequest, "Temperature must be between -50 and 60")
+	}
+
+	// Enrich request with live data from dashboard (weather + traffic)
+	dashData, dashErr := h.dashboardSvc.GetDashboardData(ctx)
+	if dashErr == nil {
+		aqi := dashData.Weather.AQI
+		traffic := dashData.Traffic.CongestionIndex
+		temp := dashData.Weather.Temperature
+		req.LiveAQI = &aqi
+		req.LiveTraffic = &traffic
+		req.LiveTemp = &temp
+	} else {
+		log.Printf("Could not fetch live data for prediction enrichment: %v", dashErr)
 	}
 
 	prediction, err := h.mlBridge.Predict(ctx, req)
