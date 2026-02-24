@@ -59,7 +59,7 @@ type OpenMeteoAirQualityResponse struct {
 
 // GetCurrentWeather fetches live weather + AQI from Open-Meteo
 func (s *WeatherService) GetCurrentWeather(ctx context.Context) (domain.Weather, error) {
-	// Check cache first
+	// Check cache first (read lock)
 	s.mu.RLock()
 	if s.cachedData != nil && time.Now().Before(s.cacheExpiry) {
 		cached := *s.cachedData
@@ -67,6 +67,15 @@ func (s *WeatherService) GetCurrentWeather(ctx context.Context) (domain.Weather,
 		return cached, nil
 	}
 	s.mu.RUnlock()
+
+	// Upgrade to write lock, double-check to avoid thundering herd
+	s.mu.Lock()
+	if s.cachedData != nil && time.Now().Before(s.cacheExpiry) {
+		cached := *s.cachedData
+		s.mu.Unlock()
+		return cached, nil
+	}
+	s.mu.Unlock()
 
 	// Fetch weather from Open-Meteo
 	weather, err := s.fetchOpenMeteoWeather(ctx)
@@ -204,20 +213,23 @@ func wmoToDescription(code int) (string, string) {
 	}
 }
 
-// pm25ToAQI converts PM2.5 concentration (μg/m³) to US EPA AQI (0-500)
+// pm25ToAQI converts PM2.5 concentration (μg/m³) to US EPA AQI (0-500).
+// Uses the February 2024 revised breakpoints (88 FR 5558).
+// Key change: "Good" category lowered from 12.0 to 9.0 µg/m³,
+// "Very Unhealthy" ceiling lowered from 150.4 to 125.4 µg/m³.
 func pm25ToAQI(pm25 float64) int {
 	type bp struct {
 		cLow, cHigh float64
 		iLow, iHigh int
 	}
 	breakpoints := []bp{
-		{0.0, 12.0, 0, 50},
-		{12.1, 35.4, 51, 100},
+		{0.0, 9.0, 0, 50},
+		{9.1, 35.4, 51, 100},
 		{35.5, 55.4, 101, 150},
-		{55.5, 150.4, 151, 200},
-		{150.5, 250.4, 201, 300},
-		{250.5, 350.4, 301, 400},
-		{350.5, 500.4, 401, 500},
+		{55.5, 125.4, 151, 200},
+		{125.5, 225.4, 201, 300},
+		{225.5, 325.4, 301, 400},
+		{325.5, 500.4, 401, 500},
 	}
 
 	for _, b := range breakpoints {

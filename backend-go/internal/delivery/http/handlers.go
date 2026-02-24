@@ -2,11 +2,7 @@ package http
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"regexp"
 	"time"
 
@@ -103,9 +99,21 @@ func (h *Handler) Predict(c *fiber.Ctx) error {
 		if !dateRe.MatchString(req.Date) {
 			return fiber.NewError(fiber.StatusBadRequest, "Date must be in YYYY-MM-DD format")
 		}
+		// Verify it's a real date (e.g. reject 2025-02-30)
+		if _, err := time.Parse("2006-01-02", req.Date); err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, "Invalid date value")
+		}
 	}
 	if req.Temperature != nil && (*req.Temperature < -50 || *req.Temperature > 60) {
 		return fiber.NewError(fiber.StatusBadRequest, "Temperature must be between -50 and 60")
+	}
+	if req.Language != "" {
+		switch req.Language {
+		case "ru", "en", "kk":
+			// ok
+		default:
+			return fiber.NewError(fiber.StatusBadRequest, "Language must be one of: ru, en, kk")
+		}
 	}
 
 	// Enrich request with live data from dashboard (weather + traffic)
@@ -128,7 +136,8 @@ func (h *Handler) Predict(c *fiber.Ctx) error {
 
 	// Log prediction to database asynchronously
 	go func() {
-		bgCtx := context.Background()
+		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 		if saveErr := h.repo.SavePredictionLog(bgCtx, req, prediction); saveErr != nil {
 			log.Printf("Failed to save prediction log: %v", saveErr)
 		}
@@ -140,31 +149,12 @@ func (h *Handler) Predict(c *fiber.Ctx) error {
 	})
 }
 
-// GetStats proxies ML stats request to Python ML service
+// GetStats proxies ML stats request to Python ML service via MLBridge
 func (h *Handler) GetStats(c *fiber.Ctx) error {
-	mlURL := h.mlBridge.GetServiceURL()
-	url := fmt.Sprintf("%s/stats", mlURL)
-
-	httpReq, err := http.NewRequestWithContext(c.Context(), http.MethodGet, url, nil)
+	result, err := h.mlBridge.GetStats(c.Context())
 	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create stats request")
-	}
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(httpReq)
-	if err != nil {
+		log.Printf("Stats fetch error: %v", err)
 		return fiber.NewError(fiber.StatusServiceUnavailable, "ML service unavailable")
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to read stats response")
-	}
-
-	var result map[string]interface{}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Invalid stats response")
 	}
 
 	return c.JSON(result)

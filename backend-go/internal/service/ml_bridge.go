@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"time"
 
@@ -51,12 +53,13 @@ func (b *MLBridge) Predict(ctx context.Context, req domain.PredictionRequest) (d
 	// Execute request
 	resp, err := b.httpClient.Do(httpReq)
 	if err != nil {
-		// Return mock prediction on error
+		log.Printf("WARNING: ML service unreachable (%v), returning mock prediction", err)
 		return b.getMockPrediction(req), nil
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		log.Printf("WARNING: ML service returned status %d, returning mock prediction", resp.StatusCode)
 		return b.getMockPrediction(req), nil
 	}
 
@@ -67,6 +70,32 @@ func (b *MLBridge) Predict(ctx context.Context, req domain.PredictionRequest) (d
 	}
 
 	return prediction, nil
+}
+
+// GetStats fetches ML model stats from the Python service.
+func (b *MLBridge) GetStats(ctx context.Context) (map[string]interface{}, error) {
+	url := fmt.Sprintf("%s/stats", b.serviceURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("ml_bridge: failed to create stats request: %w", err)
+	}
+
+	resp, err := b.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("ml_bridge: stats request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("ml_bridge: stats returned status %d", resp.StatusCode)
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1*1024*1024)).Decode(&result); err != nil {
+		return nil, fmt.Errorf("ml_bridge: failed to decode stats: %w", err)
+	}
+
+	return result, nil
 }
 
 // Health checks ML service connectivity

@@ -132,7 +132,7 @@ const (
 
 // GetCurrentTraffic fetches real traffic data from TomTom API with cache
 func (s *TrafficService) GetCurrentTraffic(ctx context.Context) (domain.Traffic, error) {
-	// Check cache first
+	// Check cache first (read lock)
 	s.mu.RLock()
 	if s.cachedData != nil && time.Now().Before(s.cacheExpiry) {
 		cached := *s.cachedData
@@ -140,6 +140,15 @@ func (s *TrafficService) GetCurrentTraffic(ctx context.Context) (domain.Traffic,
 		return cached, nil
 	}
 	s.mu.RUnlock()
+
+	// Double-check under write lock to prevent thundering herd
+	s.mu.Lock()
+	if s.cachedData != nil && time.Now().Before(s.cacheExpiry) {
+		cached := *s.cachedData
+		s.mu.Unlock()
+		return cached, nil
+	}
+	s.mu.Unlock()
 
 	// No API key → fallback to simulation
 	if s.apiKey == "" {

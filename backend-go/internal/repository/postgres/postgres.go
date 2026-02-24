@@ -89,6 +89,10 @@ func (r *PostgresRepository) GetHistoricalWeather(ctx context.Context, from, to 
 		results = append(results, w)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres: weather rows iteration error: %w", err)
+	}
+
 	return results, nil
 }
 
@@ -120,6 +124,10 @@ func (r *PostgresRepository) GetHistoricalTraffic(ctx context.Context, from, to 
 			return nil, fmt.Errorf("postgres: failed to scan traffic row: %w", err)
 		}
 		results = append(results, t)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres: traffic rows iteration error: %w", err)
 	}
 
 	return results, nil

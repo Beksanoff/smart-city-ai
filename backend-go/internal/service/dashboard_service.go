@@ -14,6 +14,8 @@ type DashboardService struct {
 	weatherSvc *WeatherService
 	trafficSvc *TrafficService
 	repo       DataRepository
+
+	wgBg sync.WaitGroup // tracks background goroutines for graceful shutdown
 }
 
 // NewDashboardService creates a new dashboard service
@@ -27,6 +29,12 @@ func NewDashboardService(
 		trafficSvc: trafficSvc,
 		repo:       repo,
 	}
+}
+
+// WaitBackground blocks until all background save goroutines complete.
+// Call during graceful shutdown to avoid dropped writes.
+func (s *DashboardService) WaitBackground() {
+	s.wgBg.Wait()
 }
 
 // GetDashboardData fetches all live data concurrently using goroutines
@@ -74,9 +82,12 @@ func (s *DashboardService) GetDashboardData(ctx context.Context) (domain.Dashboa
 		log.Printf("Dashboard data fetch error: %v", err)
 	}
 
-	// Persist data to database asynchronously
+	// Persist data to database asynchronously (tracked for graceful shutdown)
+	s.wgBg.Add(1)
 	go func() {
-		bgCtx := context.Background()
+		defer s.wgBg.Done()
+		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 		if weather.City != "" {
 			if err := s.repo.SaveWeatherData(bgCtx, weather); err != nil {
 				log.Printf("Failed to save weather data: %v", err)

@@ -82,7 +82,7 @@ func main() {
 		LimiterMiddleware: limiter.SlidingWindow{},
 	}))
 	app.Use(cors.New(cors.Config{
-		AllowOrigins: "http://localhost:3000, http://localhost:5173",
+		AllowOrigins: "http://localhost:3000, http://localhost:5173, http://smartcity-frontend",
 		AllowMethods: "GET,POST,OPTIONS",
 		AllowHeaders: "Origin,Content-Type,Accept,Authorization",
 	}))
@@ -111,6 +111,10 @@ func main() {
 	if err := app.ShutdownWithTimeout(5 * time.Second); err != nil {
 		log.Printf("Server forced to shutdown: %v", err)
 	}
+
+	// Wait for background goroutines (DB writes) to finish
+	dashboardSvc.WaitBackground()
+
 	log.Println("Server exited gracefully")
 }
 
