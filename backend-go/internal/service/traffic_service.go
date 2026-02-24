@@ -148,7 +148,8 @@ func (s *TrafficService) GetCurrentTraffic(ctx context.Context) (domain.Traffic,
 		s.mu.Unlock()
 		return cached, nil
 	}
-	s.mu.Unlock()
+	// Hold lock during fetch — only one goroutine fetches; others wait.
+	defer s.mu.Unlock()
 
 	// No API key → fallback to simulation
 	if s.apiKey == "" {
@@ -165,11 +166,9 @@ func (s *TrafficService) GetCurrentTraffic(ctx context.Context) (domain.Traffic,
 		return traffic, nil
 	}
 
-	// Cache the result
-	s.mu.Lock()
+	// Cache the result (still under write lock)
 	s.cachedData = &traffic
 	s.cacheExpiry = time.Now().Add(s.cacheTTL)
-	s.mu.Unlock()
 
 	return traffic, nil
 }

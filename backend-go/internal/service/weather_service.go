@@ -75,7 +75,9 @@ func (s *WeatherService) GetCurrentWeather(ctx context.Context) (domain.Weather,
 		s.mu.Unlock()
 		return cached, nil
 	}
-	s.mu.Unlock()
+	// Hold lock during fetch — only one goroutine fetches; others wait
+	// and will hit the cache on next RLock check. Blocks ≤10s once per 5 min.
+	defer s.mu.Unlock()
 
 	// Fetch weather from Open-Meteo
 	weather, err := s.fetchOpenMeteoWeather(ctx)
@@ -92,11 +94,9 @@ func (s *WeatherService) GetCurrentWeather(ctx context.Context) (domain.Weather,
 		weather.AQI = s.estimateAQI(weather.Temperature)
 	}
 
-	// Cache result
-	s.mu.Lock()
+	// Cache result (still under write lock)
 	s.cachedData = &weather
 	s.cacheExpiry = time.Now().Add(s.cacheTTL)
-	s.mu.Unlock()
 
 	log.Printf("Open-Meteo weather: %.1f°C, humidity=%d%%, AQI=%d, %s",
 		weather.Temperature, weather.Humidity, weather.AQI, weather.Description)

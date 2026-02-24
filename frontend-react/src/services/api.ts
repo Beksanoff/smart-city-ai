@@ -140,10 +140,13 @@ export const api = {
 
     /**
      * Get AI prediction
+     * Uses extended timeout (35s) because Go→Python→Groq LLM chain can take up to 30s.
      */
     predict: async (request: PredictionRequest): Promise<PredictionResponse> => {
         try {
-            const response = await apiClient.post<ApiResponse<PredictionResponse>>('/api/v1/predict', request)
+            const response = await apiClient.post<ApiResponse<PredictionResponse>>(
+                '/api/v1/predict', request, { timeout: 35000 },
+            )
             return response.data.data
         } catch (error) {
             return getMockPrediction()
