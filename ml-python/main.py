@@ -6,6 +6,9 @@ FastAPI application with:
 - Enhanced Groq LLM with live data context
 """
 
+import asyncio
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -18,11 +21,29 @@ from services.logic import PredictionService
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Initialize prediction service (trains ML models on startup)
+prediction_service = PredictionService()
+
+# Concurrency guard for model retraining
+_retrain_lock = asyncio.Lock()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage application lifespan: startup and shutdown."""
+    # Startup: nothing extra needed (PredictionService already initialized)
+    yield
+    # Shutdown: close HTTP client
+    await prediction_service.forecast_service.close()
+    logger.info("Forecast HTTP client closed")
+
+
 # Initialize FastAPI app
 app = FastAPI(
     title="SmartCity ML Service",
     description="AI-powered predictions with real ML models for Almaty urban monitoring",
     version="2.0.0",
+    lifespan=lifespan,
 )
 
 # CORS middleware — restricted to known origins
@@ -38,16 +59,6 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type", "Accept"],
 )
-
-# Initialize prediction service (trains ML models on startup)
-prediction_service = PredictionService()
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Clean up resources on shutdown."""
-    prediction_service.forecast_service.close()
-    logger.info("Forecast HTTP client closed")
 
 
 class PredictionRequest(BaseModel):
@@ -139,11 +150,14 @@ async def model_info():
 @app.post("/model/retrain")
 async def retrain_model():
     """Re-train ML models from CSV data. Useful after data updates."""
+    if _retrain_lock.locked():
+        raise HTTPException(status_code=409, detail="Retraining already in progress")
     try:
-        if prediction_service.df is None:
-            raise HTTPException(status_code=400, detail="No data available")
-        metrics = prediction_service.ml_model.train(prediction_service.df)
-        return {"success": True, "data": metrics}
+        async with _retrain_lock:
+            if prediction_service.df is None:
+                raise HTTPException(status_code=400, detail="No data available")
+            metrics = prediction_service.ml_model.train(prediction_service.df)
+            return {"success": True, "data": metrics}
     except HTTPException:
         raise
     except Exception as e:

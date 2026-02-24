@@ -101,25 +101,28 @@ def fetch_air_quality_archive(start: str, end: str) -> pd.DataFrame:
 
 
 def pm25_to_aqi(pm25: float) -> int:
-    """Convert PM2.5 (μg/m³) to US EPA AQI."""
-    if pd.isna(pm25):
+    """Convert PM2.5 (μg/m³) to US EPA AQI.
+
+    Uses the February 2024 revised breakpoints (88 FR 5558).
+    Key change: "Good" category lowered from 12.0 to 9.0 µg/m³,
+    "Very Unhealthy" ceiling lowered from 150.4 to 125.4 µg/m³.
+    """
+    if pd.isna(pm25) or pm25 < 0:
         return 0
     breakpoints = [
-        (0.0, 12.0, 0, 50),
-        (12.1, 35.4, 51, 100),
-        (35.5, 55.4, 101, 150),
-        (55.5, 150.4, 151, 200),
-        (150.5, 250.4, 201, 300),
-        (250.5, 350.4, 301, 400),
-        (350.5, 500.4, 401, 500),
+        (0.0,   9.0,   0,  50),
+        (9.1,  35.4,  51, 100),
+        (35.5,  55.4, 101, 150),
+        (55.5, 125.4, 151, 200),
+        (125.5, 225.4, 201, 300),
+        (225.5, 325.4, 301, 400),
+        (325.5, 500.4, 401, 500),
     ]
     for c_low, c_high, i_low, i_high in breakpoints:
-        if pm25 >= c_low and pm25 <= c_high:
+        if c_low <= pm25 <= c_high:
             aqi = (i_high - i_low) / (c_high - c_low) * (pm25 - c_low) + i_low
             return int(round(aqi))
-    if pm25 > 500.4:
-        return 500
-    return 0
+    return 500 if pm25 > 500.4 else 0
 
 
 def wmo_to_condition(code: int) -> str:

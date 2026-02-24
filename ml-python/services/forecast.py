@@ -4,6 +4,7 @@ Fetches 3-day weather forecast for Almaty — free API, no key needed.
 Cached for 1 hour to avoid excessive requests.
 """
 
+import asyncio
 import logging
 import time
 from typing import Optional, Dict, Any, List
@@ -32,43 +33,56 @@ class ForecastService:
     def __init__(self):
         self._cache: Optional[Dict[str, Any]] = None
         self._cache_time: float = 0
-        self._client = httpx.Client(timeout=10.0)
+        self._client: Optional[httpx.AsyncClient] = None
+        self._lock = asyncio.Lock()
 
-    def close(self):
+    async def _get_client(self) -> httpx.AsyncClient:
+        """Lazy-initialize async HTTP client."""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=10.0)
+        return self._client
+
+    async def close(self):
         """Close the underlying httpx client to release connections."""
-        self._client.close()
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
 
     async def get_forecast(self) -> Optional[Dict[str, Any]]:
         """
         Get 3-day forecast for Almaty.
         Returns structured forecast data or None on error.
         """
-        # Check cache
+        # Check cache (lock-free read for performance)
         if self._cache and (time.time() - self._cache_time) < self.CACHE_TTL:
             return self._cache
 
-        try:
-            forecast = await self._fetch_weather_forecast()
-            aqi_forecast = await self._fetch_aqi_forecast()
+        async with self._lock:
+            # Double-check after acquiring lock (another coroutine may have refreshed)
+            if self._cache and (time.time() - self._cache_time) < self.CACHE_TTL:
+                return self._cache
 
-            if forecast is None:
-                return self._cache  # return stale cache if available
+            try:
+                forecast = await self._fetch_weather_forecast()
+                aqi_forecast = await self._fetch_aqi_forecast()
 
-            result = self._merge_forecasts(forecast, aqi_forecast)
-            self._cache = result
-            self._cache_time = time.time()
+                if forecast is None:
+                    return self._cache  # return stale cache if available
 
-            logger.info(f"Fetched 3-day forecast: {len(result.get('daily', []))} days")
-            return result
+                result = self._merge_forecasts(forecast, aqi_forecast)
+                self._cache = result
+                self._cache_time = time.time()
 
-        except Exception as e:
-            logger.error(f"Forecast fetch error: {e}")
-            return self._cache
+                logger.info(f"Fetched 3-day forecast: {len(result.get('daily', []))} days")
+                return result
+
+            except Exception as e:
+                logger.error(f"Forecast fetch error: {e}")
+                return self._cache
 
     async def _fetch_weather_forecast(self) -> Optional[Dict]:
         """Fetch weather forecast from Open-Meteo."""
-        import asyncio
         try:
+            client = await self._get_client()
             params = {
                 "latitude": ALMATY_LAT,
                 "longitude": ALMATY_LON,
@@ -84,9 +98,7 @@ class ForecastService:
                 "timezone": "Asia/Almaty",
                 "forecast_days": 3,
             }
-            response = await asyncio.to_thread(
-                self._client.get, FORECAST_URL, params=params
-            )
+            response = await client.get(FORECAST_URL, params=params)
             response.raise_for_status()
             return response.json()
         except Exception as e:
@@ -95,8 +107,8 @@ class ForecastService:
 
     async def _fetch_aqi_forecast(self) -> Optional[Dict]:
         """Fetch AQI forecast from Open-Meteo Air Quality API."""
-        import asyncio
         try:
+            client = await self._get_client()
             params = {
                 "latitude": ALMATY_LAT,
                 "longitude": ALMATY_LON,
@@ -104,15 +116,11 @@ class ForecastService:
                 "timezone": "Asia/Almaty",
                 "forecast_days": 3,
             }
-            response = await asyncio.to_thread(
-                self._client.get, AQI_FORECAST_URL, params=params
-            )
+            response = await client.get(AQI_FORECAST_URL, params=params)
             response.raise_for_status()
             return response.json()
         except Exception as e:
             logger.error(f"AQI forecast API error: {e}")
-            return None
-
     def _merge_forecasts(
         self, weather: Dict, aqi: Optional[Dict]
     ) -> Dict[str, Any]:

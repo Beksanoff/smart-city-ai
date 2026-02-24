@@ -15,6 +15,7 @@ Safeguards:
 """
 
 import logging
+import hashlib
 import pickle
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple
@@ -75,6 +76,7 @@ class SmartCityMLModel:
     TRAFFIC_MODEL_PATH = MODEL_DIR / "traffic_model.pkl"
     SCALER_PATH = MODEL_DIR / "scaler.pkl"
     METRICS_PATH = MODEL_DIR / "metrics.pkl"
+    HASH_PATH = MODEL_DIR / "checksums.txt"
 
     # Feature columns -- ONLY meteorological + calendar + lags
     # NO pollutant concentrations (pm25/pm10/no2/so2/ozone) -- they are targets!
@@ -101,7 +103,7 @@ class SmartCityMLModel:
 
     def train(self, df: pd.DataFrame) -> Dict[str, Any]:
         """
-        Train RandomForest models on historical data.
+        Train GradientBoosting (PM2.5) and RandomForest (Traffic) models.
         Returns training metrics.
         """
         if not SKLEARN_AVAILABLE:
@@ -113,28 +115,48 @@ class SmartCityMLModel:
         # Feature engineering
         df_feat = self._engineer_features(df)
 
+        # Exclude rows with interpolated PM2.5 from PM2.5 model training
+        # (keep them for traffic model which doesn't use PM2.5 as target)
+        if "is_interpolated" in df_feat.columns:
+            n_interp = df_feat["is_interpolated"].sum()
+            logger.info(f"Excluding {n_interp} interpolated PM2.5 rows from PM2.5 training")
+            df_pm25_train = df_feat[~df_feat["is_interpolated"]].copy()
+        else:
+            df_pm25_train = df_feat.copy()
+
         # Drop rows with NaN (from lag features)
         df_feat = df_feat.dropna(subset=self.FEATURE_COLS + ["pm25", "traffic_index"])
-        logger.info(f"Training samples after feature engineering: {len(df_feat)}")
+        df_pm25_train = df_pm25_train.dropna(subset=self.FEATURE_COLS + ["pm25", "traffic_index"])
+        logger.info(f"Training samples after feature engineering: {len(df_feat)} (PM2.5: {len(df_pm25_train)})")
 
         if len(df_feat) < 100:
             logger.error("Not enough data for training (need >= 100 rows)")
             return {"error": "Insufficient data"}
 
-        X = df_feat[self.FEATURE_COLS].values
-        y_pm25 = df_feat["pm25"].values
-        y_traffic = df_feat["traffic_index"].values
+        # --- PM2.5 training data (excludes interpolated rows) ---
+        X_pm25 = df_pm25_train[self.FEATURE_COLS].values
+        y_pm25_all = df_pm25_train["pm25"].values
+
+        # --- Traffic training data (all rows, synthetic target) ---
+        X_traffic_all = df_feat[self.FEATURE_COLS].values
+        y_traffic_all = df_feat["traffic_index"].values
 
         # Train/test split (80/20, time-ordered) -- BEFORE scaling to avoid data snooping
-        split_idx = int(len(X) * 0.8)
-        X_train_raw, X_test_raw = X[:split_idx], X[split_idx:]
-        y_pm25_train, y_pm25_test = y_pm25[:split_idx], y_pm25[split_idx:]
-        y_traffic_train, y_traffic_test = y_traffic[:split_idx], y_traffic[split_idx:]
+        split_pm25 = int(len(X_pm25) * 0.8)
+        split_traffic = int(len(X_traffic_all) * 0.8)
+
+        X_pm25_train_raw, X_pm25_test_raw = X_pm25[:split_pm25], X_pm25[split_pm25:]
+        y_pm25_train, y_pm25_test = y_pm25_all[:split_pm25], y_pm25_all[split_pm25:]
+
+        X_traffic_train_raw, X_traffic_test_raw = X_traffic_all[:split_traffic], X_traffic_all[split_traffic:]
+        y_traffic_train, y_traffic_test = y_traffic_all[:split_traffic], y_traffic_all[split_traffic:]
 
         # Scale features -- fit ONLY on training data (no data snooping)
         self.scaler = StandardScaler()
-        X_train = self.scaler.fit_transform(X_train_raw)
-        X_test = self.scaler.transform(X_test_raw)
+        X_pm25_train = self.scaler.fit_transform(X_pm25_train_raw)
+        X_pm25_test = self.scaler.transform(X_pm25_test_raw)
+        X_traffic_train = self.scaler.transform(X_traffic_train_raw)
+        X_traffic_test = self.scaler.transform(X_traffic_test_raw)
 
         # --- PM2.5 Model (GradientBoosting -- meteo -> PM2.5 concentration) ---
         self.pm25_model = GradientBoostingRegressor(
@@ -146,14 +168,16 @@ class SmartCityMLModel:
             subsample=0.8,
             random_state=42,
         )
-        self.pm25_model.fit(X_train, y_pm25_train)
-        pm25_pred = self.pm25_model.predict(X_test)
+        self.pm25_model.fit(X_pm25_train, y_pm25_train)
+        pm25_pred = self.pm25_model.predict(X_pm25_test)
 
         # Also evaluate AQI via deterministic formula
         aqi_true = np.array([pm25_to_aqi(v) for v in y_pm25_test])
         aqi_pred = np.array([pm25_to_aqi(v) for v in pm25_pred])
 
         # --- Traffic Model (RandomForest -- calendar + meteo -> traffic) ---
+        # WARNING: traffic_index is fully synthetic (rule-based + Gaussian noise).
+        # R² and MAE for traffic measure fit to synthetic patterns, NOT real traffic.
         self.traffic_model = RandomForestRegressor(
             n_estimators=200,
             max_depth=8,
@@ -162,8 +186,8 @@ class SmartCityMLModel:
             random_state=42,
             n_jobs=-1,
         )
-        self.traffic_model.fit(X_train, y_traffic_train)
-        traffic_pred = self.traffic_model.predict(X_test)
+        self.traffic_model.fit(X_traffic_train, y_traffic_train)
+        traffic_pred = self.traffic_model.predict(X_traffic_test)
 
         # Compute metrics
         self.metrics = {
@@ -171,18 +195,27 @@ class SmartCityMLModel:
                 "mae": round(float(mean_absolute_error(y_pm25_test, pm25_pred)), 2),
                 "r2": round(float(r2_score(y_pm25_test, pm25_pred)), 4),
                 "test_samples": len(y_pm25_test),
+                "train_samples": len(X_pm25_train),
+                "data_note": "Trained on real OpenAQ + Open-Meteo PM2.5 data only (interpolated days excluded)",
             },
             "aqi_derived": {
                 "mae": round(float(mean_absolute_error(aqi_true, aqi_pred)), 2),
                 "r2": round(float(r2_score(aqi_true, aqi_pred)), 4),
-                "note": "Deterministic from PM2.5 via US EPA formula (not ML)",
+                "note": "Deterministic from PM2.5 via US EPA 2024 revised formula (not ML)",
             },
             "traffic": {
                 "mae": round(float(mean_absolute_error(y_traffic_test, traffic_pred)), 2),
                 "r2": round(float(r2_score(y_traffic_test, traffic_pred)), 4),
                 "test_samples": len(y_traffic_test),
+                "train_samples": len(X_traffic_train),
+                "data_note": (
+                    "WARNING: traffic_index is fully synthetic (rule-based generation "
+                    "from calendar + weather patterns + Gaussian noise). "
+                    "R² measures fit to synthetic patterns, not real traffic. "
+                    "Metrics are NOT comparable to PM2.5 model metrics."
+                ),
             },
-            "train_samples": len(X_train),
+            "train_samples": len(X_pm25_train),
             "total_features": len(self.FEATURE_COLS),
             "feature_names": self.FEATURE_COLS,
         }
@@ -219,8 +252,9 @@ class SmartCityMLModel:
                 min_samples_leaf=5, random_state=42, n_jobs=-1,
             )),
         ])
-        cv_pm25 = cross_val_score(pm25_pipe, X, y_pm25, cv=tscv, scoring="r2")
-        cv_traffic = cross_val_score(traffic_pipe, X, y_traffic, cv=tscv, scoring="r2")
+        # CV on clean PM2.5 data only (no interpolated rows)
+        cv_pm25 = cross_val_score(pm25_pipe, X_pm25, y_pm25_all, cv=tscv, scoring="r2")
+        cv_traffic = cross_val_score(traffic_pipe, X_traffic_all, y_traffic_all, cv=tscv, scoring="r2")
         self.metrics["pm25"]["cv_r2_mean"] = round(float(cv_pm25.mean()), 4)
         self.metrics["pm25"]["cv_r2_std"] = round(float(cv_pm25.std()), 4)
         self.metrics["pm25"]["cv_r2_folds"] = [round(float(v), 4) for v in cv_pm25]
@@ -229,9 +263,10 @@ class SmartCityMLModel:
         self.metrics["traffic"]["cv_r2_folds"] = [round(float(v), 4) for v in cv_traffic]
         self.metrics["cv_method"] = "TimeSeriesSplit(n_splits=5)"
 
-        # -- Seasonal MAE diagnostics --
+        # -- Seasonal MAE diagnostics (PM2.5 only, on clean test data) --
+        df_pm25_test_slice = df_pm25_train.iloc[split_pm25:].copy()
         self.seasonal_diagnostics = self._compute_seasonal_diagnostics(
-            df_feat.iloc[split_idx:], pm25_pred, traffic_pred
+            df_pm25_test_slice, pm25_pred, None
         )
         self.metrics["seasonal_diagnostics"] = self.seasonal_diagnostics
 
@@ -332,6 +367,16 @@ class SmartCityMLModel:
         df = df.copy()
         df = df.sort_values("date").reset_index(drop=True)
 
+        # Mark interpolated PM2.5 rows (2020-01-01 to 2020-04-08)
+        # These were filled via seasonal interpolation in enrich_csv_openaq.py
+        # and should be excluded from PM2.5 model training
+        if "is_interpolated" not in df.columns:
+            openaq_start = pd.Timestamp("2020-04-09")
+            df["is_interpolated"] = df["date"] < openaq_start
+            n_interp = df["is_interpolated"].sum()
+            if n_interp > 0:
+                logger.info(f"Flagged {n_interp} rows as interpolated PM2.5 (before {openaq_start.date()})")
+
         # Basic transformations
         df["is_weekend_int"] = df["is_weekend"].astype(int)
         df["temp_squared"] = df["temperature"] ** 2
@@ -399,7 +444,8 @@ class SmartCityMLModel:
         ]
 
     def _compute_seasonal_diagnostics(
-        self, df_test: pd.DataFrame, pm25_pred: np.ndarray, traffic_pred: np.ndarray,
+        self, df_test: pd.DataFrame, pm25_pred: np.ndarray,
+        traffic_pred: Optional[np.ndarray] = None,
     ) -> Dict[str, Any]:
         """Compute MAE by season to detect imbalanced regression."""
         diagnostics = {}
@@ -410,19 +456,21 @@ class SmartCityMLModel:
             "autumn": [9, 10, 11],
         }
         y_pm25_test = df_test["pm25"].values
-        y_traffic_test = df_test["traffic_index"].values
 
         for name, months in seasons.items():
             mask = df_test["month"].isin(months).values
             n = int(mask.sum())
             if n < 5:
                 continue
-            diagnostics[name] = {
+            entry: Dict[str, Any] = {
                 "samples": n,
                 "pm25_mae": round(float(mean_absolute_error(y_pm25_test[mask], pm25_pred[mask])), 2),
                 "pm25_mean_actual": round(float(y_pm25_test[mask].mean()), 1),
-                "traffic_mae": round(float(mean_absolute_error(y_traffic_test[mask], traffic_pred[mask])), 2),
             }
+            if traffic_pred is not None and "traffic_index" in df_test.columns:
+                y_traffic_test = df_test["traffic_index"].values
+                entry["traffic_mae"] = round(float(mean_absolute_error(y_traffic_test[mask], traffic_pred[mask])), 2)
+            diagnostics[name] = entry
 
         # Log imbalance warnings
         winter = diagnostics.get("winter", {})
@@ -496,28 +544,64 @@ class SmartCityMLModel:
             logger.debug("Confidence reduced: lag features unavailable")
         return max(0.40, min(0.95, base))
 
+    @staticmethod
+    def _compute_file_hash(path: Path) -> str:
+        """Compute SHA-256 hash of a file for integrity verification."""
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(8192), b""):
+                h.update(chunk)
+        return h.hexdigest()
+
     def _save_models(self):
-        """Persist trained models to disk."""
+        """Persist trained models to disk with integrity checksums."""
         self.MODEL_DIR.mkdir(parents=True, exist_ok=True)
         try:
-            with open(self.PM25_MODEL_PATH, "wb") as f:
-                pickle.dump(self.pm25_model, f)
-            with open(self.TRAFFIC_MODEL_PATH, "wb") as f:
-                pickle.dump(self.traffic_model, f)
-            with open(self.SCALER_PATH, "wb") as f:
-                pickle.dump(self.scaler, f)
-            with open(self.METRICS_PATH, "wb") as f:
-                pickle.dump(self.metrics, f)
-            logger.info(f"Models saved to {self.MODEL_DIR}")
+            checksums = {}
+            for name, path, obj in [
+                ("pm25_model", self.PM25_MODEL_PATH, self.pm25_model),
+                ("traffic_model", self.TRAFFIC_MODEL_PATH, self.traffic_model),
+                ("scaler", self.SCALER_PATH, self.scaler),
+                ("metrics", self.METRICS_PATH, self.metrics),
+            ]:
+                with open(path, "wb") as f:
+                    pickle.dump(obj, f)
+                checksums[name] = self._compute_file_hash(path)
+
+            # Write checksums file
+            with open(self.HASH_PATH, "w") as f:
+                for name, h in checksums.items():
+                    f.write(f"{name}:{h}\n")
+
+            logger.info(f"Models saved to {self.MODEL_DIR} (with SHA-256 checksums)")
         except Exception as e:
             logger.error(f"Failed to save models: {e}")
 
     def load_models(self) -> bool:
-        """Load pre-trained models from disk."""
+        """Load pre-trained models from disk with integrity verification."""
         if not SKLEARN_AVAILABLE:
             return False
         try:
             if all(p.exists() for p in [self.PM25_MODEL_PATH, self.TRAFFIC_MODEL_PATH, self.SCALER_PATH]):
+                # Verify checksums if available
+                if self.HASH_PATH.exists():
+                    expected = {}
+                    for line in self.HASH_PATH.read_text().strip().split("\n"):
+                        name, h = line.split(":", 1)
+                        expected[name] = h
+
+                    for name, path in [
+                        ("pm25_model", self.PM25_MODEL_PATH),
+                        ("traffic_model", self.TRAFFIC_MODEL_PATH),
+                        ("scaler", self.SCALER_PATH),
+                    ]:
+                        if name in expected:
+                            actual = self._compute_file_hash(path)
+                            if actual != expected[name]:
+                                logger.error(f"Checksum mismatch for {name}! Expected {expected[name][:16]}..., got {actual[:16]}...")
+                                return False
+                    logger.info("Model checksums verified")
+
                 with open(self.PM25_MODEL_PATH, "rb") as f:
                     self.pm25_model = pickle.load(f)
                 with open(self.TRAFFIC_MODEL_PATH, "rb") as f:
