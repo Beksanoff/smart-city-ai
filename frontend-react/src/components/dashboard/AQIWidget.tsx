@@ -12,7 +12,7 @@ function AQIWidget({ aqi, isLoading }: AQIWidgetProps) {
     if (isLoading || aqi === undefined) {
         return (
             <div className="cyber-card animate-pulse">
-                <div className="h-32 bg-cyber-border rounded-lg" />
+                <div className="h-64 bg-cyber-border rounded-lg" />
             </div>
         )
     }
@@ -62,10 +62,10 @@ function AQIWidget({ aqi, isLoading }: AQIWidgetProps) {
         }
     }
 
-    const info = getAQIInfo(aqi)
+    const safeAqi = Number.isFinite(aqi) ? Math.max(0, Math.min(500, aqi)) : 0
+    const info = getAQIInfo(safeAqi)
     const Icon = info.icon
-
-    const rotation = Math.min((aqi / 300) * 180, 180)
+    const gaugePercent = Math.min((safeAqi / 500) * 100, 100)
 
     return (
         <div className="cyber-card">
@@ -82,21 +82,31 @@ function AQIWidget({ aqi, isLoading }: AQIWidgetProps) {
             {/* Шкала AQI */}
             <div className="relative flex justify-center mb-4">
                 <div className="relative w-40 h-20 overflow-hidden">
-                    {/* Фоновая дуга */}
-                    <div className="absolute inset-0 border-8 border-cyber-border rounded-t-full" />
-
-                    {/* Цветная дуга */}
-                    <div
-                        className={`absolute inset-0 border-8 rounded-t-full transition-all duration-500`}
-                        style={{
-                            borderColor: aqi <= 50 ? '#10b981' : aqi <= 100 ? '#f59e0b' : aqi <= 150 ? '#f97316' : aqi <= 200 ? '#ef4444' : '#8b5cf6',
-                            clipPath: `polygon(0 100%, 0 0, ${50 + rotation * 0.55}% 0, 50% 100%)`,
-                        }}
-                    />
+                    {/* SVG semicircular gauge */}
+                    <svg viewBox="0 0 120 60" className="w-full h-full">
+                        {/* Background arc */}
+                        <path
+                            d="M 10 55 A 50 50 0 0 1 110 55"
+                            fill="none"
+                            stroke="var(--cyber-border, #2a2a3e)"
+                            strokeWidth="8"
+                            strokeLinecap="round"
+                        />
+                        {/* Colored arc (proportional to AQI) */}
+                        <path
+                            d="M 10 55 A 50 50 0 0 1 110 55"
+                            fill="none"
+                            stroke={safeAqi <= 50 ? '#10b981' : safeAqi <= 100 ? '#f59e0b' : safeAqi <= 150 ? '#f97316' : safeAqi <= 200 ? '#ef4444' : '#8b5cf6'}
+                            strokeWidth="8"
+                            strokeLinecap="round"
+                            strokeDasharray={`${(gaugePercent / 100) * 157} 157`}
+                            className="transition-all duration-500"
+                        />
+                    </svg>
 
                     {/* Центральное значение */}
                     <div className="absolute bottom-0 left-1/2 -translate-x-1/2 text-center">
-                        <span className={`text-4xl font-bold ${info.color}`}>{aqi}</span>
+                        <span className={`text-4xl font-bold ${info.color}`}>{safeAqi}</span>
                     </div>
                 </div>
             </div>
@@ -110,7 +120,8 @@ function AQIWidget({ aqi, isLoading }: AQIWidgetProps) {
                 <span className="aqi-usg">100</span>
                 <span className="aqi-unhealthy">150</span>
                 <span className="aqi-very-unhealthy">200</span>
-                <span className="aqi-hazardous">300+</span>
+                <span className="aqi-very-unhealthy">300</span>
+                <span className="aqi-hazardous">500</span>
             </div>
         </div>
     )

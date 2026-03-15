@@ -12,13 +12,12 @@ import os
 import asyncio
 import logging
 from datetime import datetime
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
-from services.ml_model import SmartCityMLModel, pm25_to_aqi
+from services.ml_model import SmartCityMLModel
 from services.forecast import ForecastService
 
 logger = logging.getLogger(__name__)
@@ -69,7 +68,7 @@ class PredictionService:
                 logger.warning(f"ML training issue: {metrics['error']}")
         else:
             logger.warning("No data available for ML training")
-        
+
     def _load_data(self) -> Optional[pd.DataFrame]:
         """Load historical CSV data"""
         try:
@@ -83,7 +82,7 @@ class PredictionService:
         except Exception as e:
             logger.error(f"Failed to load data: {e}")
             return None
-    
+
     def _init_groq(self) -> Optional[Any]:
         """Initialize Groq client"""
         api_key = os.getenv("GROQ_API_KEY")
@@ -168,8 +167,8 @@ class PredictionService:
         """
         if self.df is None or self.df.empty:
             return {}
-        weekday = self.df[self.df["is_weekend"] == False]
-        weekend = self.df[self.df["is_weekend"] == True]
+        weekday = self.df[~self.df["is_weekend"]]
+        weekend = self.df[self.df["is_weekend"]]
         patterns = {}
         if not weekday.empty:
             base = float(weekday["traffic_index"].mean())
@@ -265,7 +264,7 @@ class PredictionService:
         if ml_result and "error" not in ml_result:
             aqi_prediction = int(round(ML_WEIGHT * ml_result["aqi_prediction"] + STAT_WEIGHT * stat_aqi))
             traffic_prediction = round(ML_WEIGHT * ml_result["traffic_prediction"] + STAT_WEIGHT * stat_traffic, 1)
-            confidence = min(0.95, max(ml_result["confidence"], stat_confidence))
+            confidence = min(0.95, ML_WEIGHT * ml_result["confidence"] + STAT_WEIGHT * stat_confidence)
             method = ml["ml"]
         else:
             aqi_prediction = stat_aqi
@@ -456,8 +455,8 @@ class PredictionService:
 
         # Weekend traffic ratio from data
         if is_weekend and self.df is not None:
-            weekend_data = self.df[(self.df["month"] == month) & (self.df["is_weekend"] == True)]
-            weekday_data = self.df[(self.df["month"] == month) & (self.df["is_weekend"] == False)]
+            weekend_data = self.df[(self.df["month"] == month) & self.df["is_weekend"]]
+            weekday_data = self.df[(self.df["month"] == month) & ~self.df["is_weekend"]]
             if not weekend_data.empty and not weekday_data.empty:
                 ratio = weekend_data["traffic_index"].mean() / max(weekday_data["traffic_index"].mean(), 1)
                 base_traffic *= ratio
@@ -615,7 +614,7 @@ class PredictionService:
             L = self._L.get(language, self._L["ru"])
             month = target_date.month
             season = L["season_names"].get(month, "?")
-            temp_str = f"{temperature}°C" if temperature else L["unknown"]
+            temp_str = f"{temperature}°C" if temperature is not None else L["unknown"]
             hour = now.hour
             day_name = L["days"][now.weekday()]
             target_day_name = L["days"][target_date.weekday()]
@@ -658,7 +657,8 @@ class PredictionService:
                 hist_ctx = f"""
 📊 {L['hist'].format(n=stats.get('records', '?'))}:
 - {L['temp_label']}: {L['avg']} {stats.get('temp_mean', '?')}°C (+-{stats.get('temp_std', '?')})
-- AQI: {L['avg']} {stats.get('aqi_mean', '?')} ({L['pct25']}: {stats.get('aqi_p25', '?')}, {L['pct75']}: {stats.get('aqi_p75', '?')})
+- AQI: {L['avg']} {stats.get('aqi_mean', '?')} \
+({L['pct25']}: {stats.get('aqi_p25', '?')}, {L['pct75']}: {stats.get('aqi_p75', '?')})
 - {L['traffic_label']}: {L['avg']} {stats.get('traffic_mean', '?')}%
 - PM2.5: {stats.get('pm25_mean', '?')} ug/m3
 - {L['humidity']}: {stats.get('humidity_mean', '?')}%"""
@@ -681,14 +681,16 @@ class PredictionService:
             # ML model info
             ml_ctx = f"\n🤖 {L['method']}: {ml_method}"
             if ml_result and "pm25_prediction" in ml_result:
-                ml_ctx += f"\n   PM2.5 (ML): {ml_result['pm25_prediction']} ug/m3 -> AQI (EPA): {ml_result['aqi_prediction']}"
+                ml_ctx += (f"\n   PM2.5 (ML): {ml_result['pm25_prediction']}"
+                           f" ug/m3 -> AQI (EPA): {ml_result['aqi_prediction']}")
 
             # Correlation context
             corr_ctx = ""
             temp_aqi = self.correlations.get("temperature_vs_aqi")
             if temp_aqi is not None:
                 direction = L["corr_cold"] if temp_aqi < 0 else L["corr_hot"]
-                corr_ctx = f"\n📈 {L['temp_label']}<->AQI correlation: {temp_aqi:.3f} ({direction})"
+                corr_ctx = (f"\n📈 {L['temp_label']}<->AQI correlation:"
+                            f" {temp_aqi:.3f} ({direction})")
 
             # Build rules
             rules_list = [L["lang_rule"]] + L["rules"]
@@ -893,7 +895,7 @@ RULES:
 
         seasonal_stats = {}
         for name, months in [("winter", [12, 1, 2]), ("spring", [3, 4, 5]),
-                              ("summer", [6, 7, 8]), ("autumn", [9, 10, 11])]:
+                             ("summer", [6, 7, 8]), ("autumn", [9, 10, 11])]:
             s = self.df[self.df["month"].isin(months)]
             if not s.empty:
                 entry: Dict[str, Any] = {

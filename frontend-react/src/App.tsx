@@ -39,7 +39,7 @@ function App() {
     const setLang = (code: string) => {
         if (code === 'ru' || code === 'en' || code === 'kk') {
             i18n.changeLanguage(code)
-            try { localStorage.setItem('smartcity_lang', code) } catch {}
+            try { localStorage.setItem('smartcity_lang', code) } catch { /* localStorage unavailable */ }
         }
     }
 
@@ -70,26 +70,30 @@ function App() {
         }
     }, [dashboardData?.traffic, yandexScore])
 
+    const roadsCount = trafficData?.road_segments?.length ?? 0
+    const incidents = trafficData?.incidents ?? []
+    const isUsingMockApi = Boolean(dashboardData?.weather?.is_mock || trafficData?.is_mock)
+
     return (
         <div className="min-h-screen">
             {/* Шапка */}
             <header className="border-b border-cyber-border bg-cyber-dark/50 backdrop-blur-lg sticky top-0 z-50">
-                <div className="container mx-auto px-6 py-4">
-                    <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-4">
+                <div className="container mx-auto px-4 sm:px-6 py-4">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                        <div className="flex items-center gap-3 sm:gap-4 min-w-0">
                             <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-cyber-cyan to-cyber-purple flex items-center justify-center">
                                 <Activity className="w-6 h-6 text-white" />
                             </div>
-                            <div>
-                                <h1 className="text-xl font-bold neon-text">{t('header.title')}</h1>
-                                <p className="text-sm text-cyber-muted flex items-center gap-1">
+                            <div className="min-w-0">
+                                <h1 className="text-lg sm:text-xl font-bold neon-text truncate">{t('header.title')}</h1>
+                                <p className="text-xs sm:text-sm text-cyber-muted flex items-center gap-1 truncate">
                                     <MapPin className="w-3 h-3" />
                                     {t('header.subtitle')}
                                 </p>
                             </div>
                         </div>
 
-                        <div className="flex items-center gap-4">
+                        <div className="flex flex-wrap items-center gap-2 sm:gap-4">
                             <div className="flex items-center gap-1 rounded-lg border border-cyber-border bg-cyber-dark/50 p-1">
                                 <Globe className="w-4 h-4 text-cyber-muted shrink-0" />
                                 {LANG_OPTIONS.map(({ code, label }) => (
@@ -103,10 +107,10 @@ function App() {
                                     </button>
                                 ))}
                             </div>
-                            <div className="flex items-center gap-2 text-sm">
+                            <div className="flex flex-wrap items-center gap-2 text-xs sm:text-sm">
                                 <span className="w-2 h-2 rounded-full bg-green-500 live-pulse" />
                                 <span className="text-cyber-muted">{t('common.onlineData')}</span>
-                                {dashboardData?.weather.is_mock && (
+                                {isUsingMockApi && (
                                     <span className="text-xs px-2 py-1 rounded bg-yellow-500/20 text-yellow-500">
                                         {t('common.demoMode')}
                                     </span>
@@ -119,11 +123,11 @@ function App() {
 
             {/* Навигация по вкладкам */}
             <nav className="border-b border-cyber-border bg-cyber-dark/30">
-                <div className="container mx-auto px-6">
-                    <div className="flex gap-1">
+                <div className="container mx-auto px-4 sm:px-6">
+                    <div className="flex gap-1 overflow-x-auto no-scrollbar">
                         <button
                             onClick={() => setActiveTab('monitor')}
-                            className={`flex items-center gap-2 px-6 py-4 border-b-2 transition-all ${activeTab === 'monitor'
+                            className={`flex items-center gap-2 px-4 sm:px-6 py-4 border-b-2 transition-all whitespace-nowrap ${activeTab === 'monitor'
                                 ? 'border-cyber-cyan text-cyber-cyan tab-active'
                                 : 'border-transparent text-cyber-muted hover:text-cyber-text'
                                 }`}
@@ -133,7 +137,7 @@ function App() {
                         </button>
                         <button
                             onClick={() => setActiveTab('analytics')}
-                            className={`flex items-center gap-2 px-6 py-4 border-b-2 transition-all ${activeTab === 'analytics'
+                            className={`flex items-center gap-2 px-4 sm:px-6 py-4 border-b-2 transition-all whitespace-nowrap ${activeTab === 'analytics'
                                 ? 'border-pink-500 text-pink-500 tab-active'
                                 : 'border-transparent text-cyber-muted hover:text-cyber-text'
                                 }`}
@@ -143,7 +147,7 @@ function App() {
                         </button>
                         <button
                             onClick={() => setActiveTab('planner')}
-                            className={`flex items-center gap-2 px-6 py-4 border-b-2 transition-all ${activeTab === 'planner'
+                            className={`flex items-center gap-2 px-4 sm:px-6 py-4 border-b-2 transition-all whitespace-nowrap ${activeTab === 'planner'
                                 ? 'border-cyber-purple text-cyber-purple tab-active'
                                 : 'border-transparent text-cyber-muted hover:text-cyber-text'
                                 }`}
@@ -156,7 +160,7 @@ function App() {
             </nav>
 
             {/* Основной контент */}
-            <main className="container mx-auto px-6 py-8">
+            <main className="container mx-auto px-4 sm:px-6 py-6 sm:py-8">
                 {activeTab === 'monitor' && (
                     <div className="space-y-8">
                         {/* Сетка виджетов */}
@@ -170,7 +174,7 @@ function App() {
                                 isLoading={isLoading}
                             />
                             <AQIWidget
-                                aqi={dashboardData?.weather.aqi}
+                                aqi={dashboardData?.weather?.aqi}
                                 isLoading={isLoading}
                             />
                         </div>
@@ -183,14 +187,14 @@ function App() {
                                     <Car className="w-5 h-5 text-cyber-cyan shrink-0" />
                                     {t('map.title')}
                                 </h2>
-                                <span className="text-sm text-cyber-muted shrink-0">
-                                    {t('map.roadsTracked', { count: dashboardData?.traffic.road_segments?.length || 0 })}
+                                <span className="text-xs sm:text-sm text-cyber-muted shrink-0">
+                                    {t('map.roadsTracked', { count: roadsCount })}
                                 </span>
                             </div>
-                            <div className="h-[500px] rounded-lg overflow-hidden">
+                            <div className="h-[55vh] min-h-[320px] sm:h-[500px] rounded-lg overflow-hidden">
                                 <AlmatyMap
-                                    roadSegments={dashboardData?.traffic.road_segments || []}
-                                    incidents={dashboardData?.traffic.incidents || []}
+                                    roadSegments={trafficData?.road_segments || []}
+                                    incidents={incidents}
                                     onTrafficScore={handleTrafficScore}
                                 />
                             </div>
@@ -206,7 +210,7 @@ function App() {
 
             {/* Подвал */}
             <footer className="border-t border-cyber-border bg-cyber-dark/30 py-6 mt-12">
-                <div className="container mx-auto px-6 text-center text-cyber-muted text-sm">
+                <div className="container mx-auto px-4 sm:px-6 text-center text-cyber-muted text-sm">
                     <p>{t('footer.text')}</p>
                 </div>
             </footer>

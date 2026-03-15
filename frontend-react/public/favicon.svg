@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">Smart City AI Core</title>
+  <desc id="desc">Stylized city skyline with data pulse</desc>
+  <defs>
+    <linearGradient id="g" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#00d4ff"/>
+      <stop offset="100%" stop-color="#8b5cf6"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="#0b1020"/>
+  <path d="M8 44h48" stroke="#22304d" stroke-width="2"/>
+  <rect x="12" y="30" width="8" height="14" rx="1.5" fill="url(#g)"/>
+  <rect x="23" y="24" width="8" height="20" rx="1.5" fill="url(#g)"/>
+  <rect x="34" y="18" width="8" height="26" rx="1.5" fill="url(#g)"/>
+  <rect x="45" y="27" width="8" height="17" rx="1.5" fill="url(#g)"/>
+  <path d="M11 37c6-6 12-4 18 0s12 6 24-4" fill="none" stroke="#67e8f9" stroke-width="2.5" stroke-linecap="round"/>
+  <circle cx="11" cy="37" r="2" fill="#67e8f9"/>
+  <circle cx="29" cy="37" r="2" fill="#67e8f9"/>
+  <circle cx="53" cy="33" r="2" fill="#67e8f9"/>
+</svg>

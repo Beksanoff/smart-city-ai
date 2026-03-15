@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,6 +18,10 @@ type DashboardService struct {
 	repo       DataRepository
 
 	wgBg sync.WaitGroup // tracks background goroutines for graceful shutdown
+
+	// Deduplication: write to DB at most once per minute
+	lastWriteMu sync.Mutex
+	lastWriteAt time.Time
 }
 
 // NewDashboardService creates a new dashboard service
@@ -35,6 +41,15 @@ func NewDashboardService(
 // Call during graceful shutdown to avoid dropped writes.
 func (s *DashboardService) WaitBackground() {
 	s.wgBg.Wait()
+}
+
+// TrackBackground runs fn in a tracked goroutine that WaitBackground will wait for.
+func (s *DashboardService) TrackBackground(fn func()) {
+	s.wgBg.Add(1)
+	go func() {
+		defer s.wgBg.Done()
+		fn()
+	}()
 }
 
 // GetDashboardData fetches all live data concurrently using goroutines
@@ -82,30 +97,50 @@ func (s *DashboardService) GetDashboardData(ctx context.Context) (domain.Dashboa
 		log.Printf("Dashboard data fetch error: %v", err)
 	}
 
-	// Persist data to database asynchronously (tracked for graceful shutdown)
-	s.wgBg.Add(1)
-	go func() {
-		defer s.wgBg.Done()
-		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if weather.City != "" {
-			if err := s.repo.SaveWeatherData(bgCtx, weather); err != nil {
-				log.Printf("Failed to save weather data: %v", err)
+	// Persist data to database asynchronously (tracked for graceful shutdown),
+	// but at most once per minute to avoid excessive DB writes.
+	s.lastWriteMu.Lock()
+	shouldWrite := time.Since(s.lastWriteAt) >= time.Minute
+	if shouldWrite {
+		s.lastWriteAt = time.Now()
+	}
+	s.lastWriteMu.Unlock()
+
+	if shouldWrite {
+		s.wgBg.Add(1)
+		go func() {
+			defer s.wgBg.Done()
+			bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if weather.City != "" {
+				if err := s.repo.SaveWeatherData(bgCtx, weather); err != nil {
+					log.Printf("Failed to save weather data: %v", err)
+				}
 			}
-		}
-		if traffic.CongestionIndex > 0 {
-			if err := s.repo.SaveTrafficData(bgCtx, traffic); err != nil {
-				log.Printf("Failed to save traffic data: %v", err)
+			if traffic.CongestionIndex >= 0 {
+				if err := s.repo.SaveTrafficData(bgCtx, traffic); err != nil {
+					log.Printf("Failed to save traffic data: %v", err)
+				}
 			}
+		}()
+	}
+
+	// Build combined error if any fetch failed
+	var retErr error
+	if len(errs) > 0 {
+		msgs := make([]string, len(errs))
+		for i, e := range errs {
+			msgs[i] = e.Error()
 		}
-	}()
+		retErr = fmt.Errorf("dashboard fetch errors: %s", strings.Join(msgs, "; "))
+	}
 
 	// Even with errors, return what we have
 	return domain.DashboardData{
 		Weather:   weather,
 		Traffic:   traffic,
 		Timestamp: time.Now(),
-	}, nil
+	}, retErr
 }
 
 // GetWeather returns current weather

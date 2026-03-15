@@ -64,12 +64,12 @@ export default function CorrelationChart() {
     const usingFallback = chartData === null
     const displayData = chartData || fallbackData
 
-    const CustomTooltip = ({ active, payload, label }: any) => {
+    const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: Array<{ color?: string; name?: string | number; value?: number; dataKey?: string | number }>; label?: string }) => {
         if (!active || !payload?.length) return null
         return (
             <div className="bg-cyber-dark border border-cyber-border rounded-lg px-3 py-2 shadow-lg">
                 <p className="text-xs text-cyber-muted mb-1.5 font-medium">{label}</p>
-                {payload.map((p: any, i: number) => (
+                {payload.map((p, i: number) => (
                     <p key={i} className="text-sm" style={{ color: p.color }}>
                         {p.name}: <span className="font-semibold">{p.value}{p.dataKey === 'temperature' ? '°C' : ''}</span>
                     </p>

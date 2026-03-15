@@ -27,7 +27,7 @@ interface AlmatyMapProps {
 const ALMATY_CENTER: [number, number] = [43.2389, 76.8897] // [lat, lon] for Yandex
 
 // Yandex Maps API key (получить на developer.tech.yandex.ru)
-const YANDEX_API_KEY = import.meta.env.VITE_YANDEX_MAPS_API_KEY || ''
+const YANDEX_API_KEY = (import.meta.env.VITE_YANDEX_MAPS_API_KEY || '').trim()
 
 // Global state: prevent multiple script loads
 let ymapsPromise: Promise<void> | null = null
@@ -36,7 +36,9 @@ let ymapsPromise: Promise<void> | null = null
  * Load Yandex Maps JS API v2.1 once, return a Promise that resolves when ymaps.ready() fires.
  */
 function loadYandexMaps(lang: string = 'ru'): Promise<void> {
-    // Map i18n codes to Yandex lang codes
+    // Map i18n codes to Yandex lang codes.
+    // Kazakh ('kk') falls back to Russian because Yandex Maps JS API v2.1
+    // does not support Kazakh as a UI language.
     const langMap: Record<string, string> = { ru: 'ru_RU', en: 'en_US', kk: 'ru_RU' }
     const ymLang = langMap[lang] || 'ru_RU'
 
@@ -49,21 +51,75 @@ function loadYandexMaps(lang: string = 'ru'): Promise<void> {
             return
         }
 
-        const script = document.createElement('script')
-        const keyPart = YANDEX_API_KEY ? `apikey=${YANDEX_API_KEY}&` : ''
-        script.src = `https://api-maps.yandex.ru/2.1/?${keyPart}lang=${ymLang}`
-        script.async = true
-        script.onload = () => {
-            window.ymaps.ready(resolve)
+        let settled = false
+        let timeoutId: ReturnType<typeof setTimeout> | null = null
+
+        const clear = () => {
+            if (timeoutId) clearTimeout(timeoutId)
         }
-        script.onerror = () => {
+
+        const finishResolve = () => {
+            if (settled) return
+            settled = true
+            clear()
+            resolve()
+        }
+
+        const finishReject = (message: string) => {
+            if (settled) return
+            settled = true
+            clear()
             ymapsPromise = null
-            reject(new Error('Failed to load Yandex Maps API'))
+            reject(new Error(message))
         }
-        document.head.appendChild(script)
+
+        const appendScript = (withKey: boolean) => {
+            const script = document.createElement('script')
+            const keyPart = withKey && YANDEX_API_KEY ? `apikey=${encodeURIComponent(YANDEX_API_KEY)}&` : ''
+            script.src = `https://api-maps.yandex.ru/2.1/?${keyPart}lang=${ymLang}`
+            script.async = true
+            script.onload = () => {
+                if (!window.ymaps) {
+                    finishReject('Yandex Maps loaded without ymaps object')
+                    return
+                }
+                window.ymaps.ready(finishResolve, (err: unknown) => {
+                    finishReject(
+                        'Yandex Maps init error: ' +
+                        (err instanceof Error ? err.message : String(err))
+                    )
+                })
+            }
+            script.onerror = () => {
+                script.remove()
+                if (withKey && YANDEX_API_KEY) {
+                    // Fallback for key/domain issues: retry without API key.
+                    appendScript(false)
+                    return
+                }
+                finishReject('Failed to load Yandex Maps API script')
+            }
+            document.head.appendChild(script)
+        }
+
+        timeoutId = setTimeout(() => {
+            finishReject('Yandex Maps loading timeout (network or key/domain restriction)')
+        }, 15000)
+
+        appendScript(true)
     })
 
     return ymapsPromise
+}
+
+/** Escape HTML to prevent XSS when strings are rendered via innerHTML (e.g. Yandex Maps balloons) */
+function escapeHtml(str: string): string {
+    return str
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;')
 }
 
 function incidentEmoji(type: string): string {
@@ -115,15 +171,20 @@ function yandexScoreToMetrics(level: number): YandexTrafficScore {
     }
 }
 
-function AlmatyMap({ roadSegments: _roadSegments, incidents = [], onTrafficScore }: AlmatyMapProps) {
+function AlmatyMap({ incidents = [], onTrafficScore }: AlmatyMapProps) {
     const { t, i18n } = useTranslation()
     const containerRef = useRef<HTMLDivElement>(null)
-    const mapRef = useRef<any>(null)
-    const incidentsCollectionRef = useRef<any>(null)
+    const mapRef = useRef<YMapsMap | null>(null)
+    const incidentsCollectionRef = useRef<YMapsGeoObjectCollection | null>(null)
     const [mapReady, setMapReady] = useState(false)
     const [loadError, setLoadError] = useState<string | null>(null)
     const onTrafficScoreRef = useRef(onTrafficScore)
     onTrafficScoreRef.current = onTrafficScore
+
+    // Refs for cleanup (set inside async .then, cleaned in effect return)
+    const cleanupRef = useRef<{ timer: ReturnType<typeof setTimeout> | null; provider: YMapsTrafficProvider | null; emitScore: (() => void) | null }>({
+        timer: null, provider: null, emitScore: null,
+    })
 
     // Initialize Yandex Map
     useEffect(() => {
@@ -165,7 +226,10 @@ function AlmatyMap({ roadSegments: _roadSegments, incidents = [], onTrafficScore
                 // Listen for score changes (updates ~every 60s)
                 provider.state.events.add('change', emitScore)
                 // Also try to read initial value after a short delay
-                setTimeout(emitScore, 3000)
+                const timer = setTimeout(emitScore, 3000)
+
+                // Store references for cleanup
+                cleanupRef.current = { timer, provider, emitScore }
 
                 // Create a GeoObjectCollection for TomTom incidents overlay
                 const incidentsCollection = new ymaps.GeoObjectCollection()
@@ -183,11 +247,23 @@ function AlmatyMap({ roadSegments: _roadSegments, incidents = [], onTrafficScore
 
         return () => {
             destroyed = true
+            // Clear timer to prevent post-unmount callback
+            if (cleanupRef.current.timer) {
+                clearTimeout(cleanupRef.current.timer)
+            }
+            // Remove event listener to prevent memory leak
+            if (cleanupRef.current.provider && cleanupRef.current.emitScore) {
+                try {
+                    cleanupRef.current.provider.state.events.remove('change', cleanupRef.current.emitScore)
+                } catch { /* noop */ }
+            }
+            cleanupRef.current = { timer: null, provider: null, emitScore: null }
             if (mapRef.current) {
                 mapRef.current.destroy()
                 mapRef.current = null
             }
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- map initializes once on mount; language/t changes don't require re-creating the map instance
     }, [])
 
     // Update TomTom incident markers on the Yandex map
@@ -203,8 +279,8 @@ function AlmatyMap({ roadSegments: _roadSegments, incidents = [], onTrafficScore
                 [inc.lat, inc.lon],
                 {
                     iconCaption: label,
-                    balloonContentHeader: `${incidentEmoji(inc.type)} ${label}`,
-                    balloonContentBody: inc.description,
+                    balloonContentHeader: `${incidentEmoji(inc.type)} ${escapeHtml(label)}`,
+                    balloonContentBody: escapeHtml(inc.description),
                 },
                 {
                     preset: inc.type === 'accident'
@@ -239,7 +315,16 @@ function AlmatyMap({ roadSegments: _roadSegments, incidents = [], onTrafficScore
     return (
         <div className="relative w-full h-full rounded-lg overflow-hidden">
             {/* Yandex Map container */}
-            <div ref={containerRef} className="w-full h-full" />
+            <div ref={containerRef} className="w-full h-full" role="img" aria-label={t('map.title')} />
+
+            {!mapReady && !loadError && (
+                <div className="absolute inset-0 z-20 bg-cyber-dark/80 backdrop-blur-sm flex items-center justify-center">
+                    <div className="text-center px-4">
+                        <p className="text-cyber-cyan text-sm font-medium">{t('common.loading')}</p>
+                        <p className="text-cyber-muted text-xs mt-1">{t('map.yandexLive')}</p>
+                    </div>
+                </div>
+            )}
 
             {/* Заголовок карты */}
             <div className="absolute top-4 left-4 bg-cyber-dark/80 backdrop-blur-sm rounded-lg px-4 py-2 border border-cyber-border z-10 pointer-events-none">
@@ -284,9 +369,14 @@ function AlmatyMap({ roadSegments: _roadSegments, incidents = [], onTrafficScore
 
 export default AlmatyMap
 
-// Declare ymaps on window for TypeScript
+// Minimal Yandex Maps 2.1 typings (no @types/yandex-maps for v2.1)
+interface YMapsMap { destroy(): void; geoObjects: { add(obj: unknown): void; remove(obj: unknown): void }; controls: { add(ctrl: unknown): void } }
+interface YMapsGeoObjectCollection { removeAll(): void; add(obj: unknown): void; getLength(): number }
+interface YMapsTrafficProvider { state: { get(key: string): unknown; set(key: string, value: unknown): void; events: { add(event: string, handler: () => void): void; remove(event: string, handler: () => void): void } } }
+
 declare global {
     interface Window {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Yandex Maps 2.1 has no official TS typings
         ymaps: any
     }
 }

@@ -63,9 +63,9 @@ func (b *MLBridge) Predict(ctx context.Context, req domain.PredictionRequest) (d
 		return b.getMockPrediction(req), nil
 	}
 
-	// Parse response
+	// Parse response (limit body to 5 MB to prevent DoS from misbehaving ML service)
 	var prediction domain.PredictionResponse
-	if err := json.NewDecoder(resp.Body).Decode(&prediction); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 5*1024*1024)).Decode(&prediction); err != nil {
 		return domain.PredictionResponse{}, fmt.Errorf("ml_bridge: failed to decode response: %w", err)
 	}
 

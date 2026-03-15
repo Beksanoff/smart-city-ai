@@ -36,7 +36,7 @@ class ErrorBoundary extends Component<Props, State> {
                         {i18n.t('common.errorOccurred')}
                     </h2>
                     <p className="text-cyber-muted text-sm mb-4 break-words">
-                        {this.state.error?.message || i18n.t('common.unknownError')}
+                        {i18n.t('common.unknownError')}
                     </p>
                     <button
                         onClick={() => this.setState({ hasError: false, error: null })}

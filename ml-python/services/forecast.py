@@ -7,7 +7,7 @@ Cached for 1 hour to avoid excessive requests.
 import asyncio
 import logging
 import time
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 
 import httpx
 
@@ -62,8 +62,10 @@ class ForecastService:
                 return self._cache
 
             try:
-                forecast = await self._fetch_weather_forecast()
-                aqi_forecast = await self._fetch_aqi_forecast()
+                forecast, aqi_forecast = await asyncio.gather(
+                    self._fetch_weather_forecast(),
+                    self._fetch_aqi_forecast(),
+                )
 
                 if forecast is None:
                     return self._cache  # return stale cache if available
@@ -121,6 +123,7 @@ class ForecastService:
             return response.json()
         except Exception as e:
             logger.error(f"AQI forecast API error: {e}")
+
     def _merge_forecasts(
         self, weather: Dict, aqi: Optional[Dict]
     ) -> Dict[str, Any]:

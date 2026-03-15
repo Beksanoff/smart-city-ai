@@ -1,6 +1,2 @@
-declare module '@deck.gl/react';
-declare module '@deck.gl/layers';
-declare module '@deck.gl/aggregation-layers';
-declare module '@deck.gl/core';
-declare module 'maplibre-gl';
-declare module 'react-map-gl/maplibre';
+// No external map library type declarations needed — using Yandex Maps via script tag
+// Window.ymaps is declared in AlmatyMap.tsx

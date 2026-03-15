@@ -135,7 +135,7 @@ func (s *TrafficService) GetCurrentTraffic(ctx context.Context) (domain.Traffic,
 	// Check cache first (read lock)
 	s.mu.RLock()
 	if s.cachedData != nil && time.Now().Before(s.cacheExpiry) {
-		cached := *s.cachedData
+		cached := s.deepCopyTraffic(s.cachedData)
 		s.mu.RUnlock()
 		return cached, nil
 	}
@@ -144,7 +144,7 @@ func (s *TrafficService) GetCurrentTraffic(ctx context.Context) (domain.Traffic,
 	// Double-check under write lock to prevent thundering herd
 	s.mu.Lock()
 	if s.cachedData != nil && time.Now().Before(s.cacheExpiry) {
-		cached := *s.cachedData
+		cached := s.deepCopyTraffic(s.cachedData)
 		s.mu.Unlock()
 		return cached, nil
 	}
@@ -155,6 +155,8 @@ func (s *TrafficService) GetCurrentTraffic(ctx context.Context) (domain.Traffic,
 	if s.apiKey == "" {
 		log.Println("TomTom API key not set, using simulated traffic data")
 		traffic := s.generateTrafficData()
+		s.cachedData = &traffic
+		s.cacheExpiry = time.Now().Add(s.cacheTTL)
 		return traffic, nil
 	}
 
@@ -163,6 +165,8 @@ func (s *TrafficService) GetCurrentTraffic(ctx context.Context) (domain.Traffic,
 	if err != nil {
 		log.Printf("TomTom API error, falling back to simulation: %v", err)
 		traffic = s.generateTrafficData()
+		s.cachedData = &traffic
+		s.cacheExpiry = time.Now().Add(s.cacheTTL)
 		return traffic, nil
 	}
 
@@ -171,6 +175,25 @@ func (s *TrafficService) GetCurrentTraffic(ctx context.Context) (domain.Traffic,
 	s.cacheExpiry = time.Now().Add(s.cacheTTL)
 
 	return traffic, nil
+}
+
+// deepCopyTraffic returns a deep copy of a Traffic value so cached slices
+// are not shared with callers who might mutate them.
+func (s *TrafficService) deepCopyTraffic(src *domain.Traffic) domain.Traffic {
+	dst := *src
+	if src.RoadSegments != nil {
+		dst.RoadSegments = make([]domain.RoadSegment, len(src.RoadSegments))
+		copy(dst.RoadSegments, src.RoadSegments)
+	}
+	if src.HeatmapPoints != nil {
+		dst.HeatmapPoints = make([]domain.HeatmapPoint, len(src.HeatmapPoints))
+		copy(dst.HeatmapPoints, src.HeatmapPoints)
+	}
+	if src.Incidents != nil {
+		dst.Incidents = make([]domain.Incident, len(src.Incidents))
+		copy(dst.Incidents, src.Incidents)
+	}
+	return dst
 }
 
 // fetchTomTomTraffic queries TomTom APIs for real traffic data
@@ -273,18 +296,18 @@ func (s *TrafficService) fetchTomTomTraffic(ctx context.Context) (domain.Traffic
 // queryFlowSegment queries TomTom Traffic Flow for a single road point
 func (s *TrafficService) queryFlowSegment(ctx context.Context, lat, lon float64) (*TomTomFlowResponse, error) {
 	url := fmt.Sprintf(
-		"https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json?point=%f,%f&key=%s&unit=KMPH&thickness=1",
-		lat, lon, s.apiKey,
+		"https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json?point=%f,%f&unit=KMPH&thickness=1",
+		lat, lon,
 	)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url+"&key="+s.apiKey, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create flow request for %.4f,%.4f: %w", lat, lon, err)
 	}
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("flow request failed for %.4f,%.4f: %w", lat, lon, err)
 	}
 	defer resp.Body.Close()
 
@@ -302,12 +325,12 @@ func (s *TrafficService) queryFlowSegment(ctx context.Context, lat, lon float64)
 
 // fetchTomTomIncidents queries TomTom Traffic Incidents API v5 for Almaty area
 func (s *TrafficService) fetchTomTomIncidents(ctx context.Context) []domain.Incident {
-	url := fmt.Sprintf(
-		"https://api.tomtom.com/traffic/services/5/incidentDetails?key=%s&bbox=%f,%f,%f,%f&language=ru-RU&categoryFilter=1,6,7,8,9,14&timeValidityFilter=present",
-		s.apiKey, almatyMinLon, almatyMinLat, almatyMaxLon, almatyMaxLat,
+	baseURL := fmt.Sprintf(
+		"https://api.tomtom.com/traffic/services/5/incidentDetails?bbox=%f,%f,%f,%f&language=ru-RU&categoryFilter=1,6,7,8,9,14&timeValidityFilter=present",
+		almatyMinLon, almatyMinLat, almatyMaxLon, almatyMaxLat,
 	)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"&key="+s.apiKey, nil)
 	if err != nil {
 		log.Printf("Failed to create incidents request: %v", err)
 		return nil
@@ -373,8 +396,8 @@ func (s *TrafficService) mapTomTomCategory(category int) string {
 		return "accident"
 	case 9, 7, 8: // Road Works, Lane Closed, Road Closed
 		return "roadwork"
-	default: // Jam, other hazards
-		return "police"
+	default: // Jam (category 6), other hazards
+		return "congestion"
 	}
 }
 

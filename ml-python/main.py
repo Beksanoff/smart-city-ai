@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional
 import logging
 
@@ -72,6 +72,43 @@ class PredictionRequest(BaseModel):
     live_traffic: Optional[float] = None
     live_temp: Optional[float] = None
 
+    @field_validator('date')
+    @classmethod
+    def validate_date_format(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v != '':
+            import re
+            if not re.match(r'^\d{4}-\d{2}-\d{2}$', v):
+                raise ValueError('Date must be in YYYY-MM-DD format')
+        return v if v else None
+
+    @field_validator('temperature')
+    @classmethod
+    def validate_temperature_range(cls, v: Optional[float]) -> Optional[float]:
+        if v is not None and (v < -60 or v > 60):
+            raise ValueError('Temperature must be between -60 and 60')
+        return v
+
+    @field_validator('query')
+    @classmethod
+    def validate_query_length(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v != '' and len(v) > 2000:
+            raise ValueError('Query must be less than 2000 characters')
+        return v if v else None
+
+    @field_validator('language')
+    @classmethod
+    def validate_language(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v != '' and v not in ('ru', 'en', 'kk'):
+            raise ValueError('Language must be one of: ru, en, kk')
+        return v if v else None
+
+    @field_validator('live_aqi')
+    @classmethod
+    def validate_aqi_range(cls, v: Optional[int]) -> Optional[int]:
+        if v is not None and (v < 0 or v > 500):
+            raise ValueError('AQI must be between 0 and 500')
+        return v
+
 
 class PredictionResponse(BaseModel):
     """Response model for predictions"""
@@ -100,7 +137,7 @@ async def health_check():
 async def predict(request: PredictionRequest):
     """
     Generate AI prediction for Almaty urban conditions.
-    
+
     Enhanced with:
     - Real ML models (GradientBoosting + RandomForest)
     - Open-Meteo 3-day forecast
@@ -108,8 +145,13 @@ async def predict(request: PredictionRequest):
     - Adaptive Groq LLM prompt
     """
     try:
-        logger.info(f"Prediction request: date={request.date}, temp={request.temperature}, "
-                     f"lang={request.language}, live_aqi={request.live_aqi}, live_traffic={request.live_traffic}")
+        # Sanitize log output to prevent log injection
+        safe_date = (request.date or '').replace('\n', '').replace('\r', '')[:20]
+        safe_lang = (request.language or '').replace('\n', '').replace('\r', '')[:5]
+        logger.info(
+            "Prediction request: date=%s, temp=%s, lang=%s, live_aqi=%s, live_traffic=%s",
+            safe_date, request.temperature, safe_lang, request.live_aqi, request.live_traffic
+        )
         result = await prediction_service.predict(
             date=request.date,
             temperature=request.temperature,

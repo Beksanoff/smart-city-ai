@@ -30,7 +30,18 @@ export const en = {
     km: 'km',
   },
   weatherDesc: {
+    // Open-Meteo WMO codes (from Go wmoToDescription)
     'clear sky': 'Clear',
+    'partly cloudy': 'Partly cloudy',
+    'fog': 'Fog',
+    'drizzle': 'Drizzle',
+    'rain': 'Rain',
+    'snow': 'Snow',
+    'rain showers': 'Rain showers',
+    'snow showers': 'Snow showers',
+    'thunderstorm': 'Thunderstorm',
+    'cloudy': 'Cloudy',
+    // Legacy OpenWeatherMap keys (backward compat)
     'few clouds': 'Few clouds',
     'scattered clouds': 'Scattered clouds',
     'broken clouds': 'Broken clouds',
@@ -39,8 +50,6 @@ export const en = {
     'moderate rain': 'Moderate rain',
     'heavy rain': 'Heavy rain',
     'light snow': 'Light snow',
-    snow: 'Snow',
-    fog: 'Fog',
     mist: 'Mist',
   },
   traffic: {

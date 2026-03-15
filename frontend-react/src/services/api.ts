@@ -85,7 +85,9 @@ export interface ApiResponse<T> {
 }
 
 // API Client
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080'
+// Always use same-origin API proxy (/api) in browser builds.
+// This avoids cross-origin/CSP issues and works on localhost and LAN devices.
+const API_BASE_URL = ''
 
 const apiClient: AxiosInstance = axios.create({
     baseURL: API_BASE_URL,
@@ -94,10 +96,6 @@ const apiClient: AxiosInstance = axios.create({
         'Content-Type': 'application/json',
     },
 })
-
-// Error handler
-// Error handler (unused)
-// const handleApiError = (error: AxiosError) => { ... }
 
 // API Functions
 export const api = {
@@ -109,7 +107,7 @@ export const api = {
             const response = await apiClient.get<ApiResponse<DashboardData>>('/api/v1/dashboard')
             return response.data.data
         } catch (error) {
-            // Return mock data on error for development
+            console.warn('Dashboard API unavailable, using mock data:', (error as Error)?.message)
             return getMockDashboardData()
         }
     },
@@ -122,6 +120,7 @@ export const api = {
             const response = await apiClient.get<ApiResponse<Weather>>('/api/v1/weather')
             return response.data.data
         } catch (error) {
+            console.warn('Weather API unavailable, using mock data:', (error as Error)?.message)
             return getMockWeather()
         }
     },
@@ -134,6 +133,7 @@ export const api = {
             const response = await apiClient.get<ApiResponse<Traffic>>('/api/v1/traffic')
             return response.data.data
         } catch (error) {
+            console.warn('Traffic API unavailable, using mock data:', (error as Error)?.message)
             return getMockTraffic()
         }
     },
@@ -149,6 +149,7 @@ export const api = {
             )
             return response.data.data
         } catch (error) {
+            console.warn('Predict API error, using mock:', (error as Error)?.message)
             return getMockPrediction()
         }
     },
@@ -196,7 +197,7 @@ export const api = {
     /**
      * Get ML stats (correlations, seasonal data)
      */
-    getStats: async (): Promise<any> => {
+    getStats: async (): Promise<Record<string, unknown> | null> => {
         try {
             const response = await apiClient.get('/api/v1/stats')
             return response.data
@@ -234,7 +235,7 @@ function getMockTraffic(): Traffic {
 
     // Add jitter so it doesn't hang on a static value
     const baseCongestion = isRushHour ? 75 : 40
-    const jitter = Math.random() * 15 - 5 // +/- 5-10
+    const jitter = Math.random() * 10 - 5 // symmetric [-5, +5)
     const congestionIndex = Math.min(100, Math.max(0, baseCongestion + jitter))
 
     return {
@@ -349,15 +350,34 @@ function getMockDashboardData(): DashboardData {
 function getMockPrediction(): PredictionResponse {
     const month = new Date().getMonth() + 1
     const isWinter = month >= 12 || month <= 2
+    const lang = (typeof document !== 'undefined' ? document.documentElement.lang : 'ru').slice(0, 2)
+
+    const text = {
+        ru: {
+            winter: 'Зимние условия в Алматы: Высокий смог из-за угольного отопления. Рекомендуется оставаться в помещении и использовать маски N95 на улице.',
+            summer: 'Летние условия в Алматы: Хорошее качество воздуха. Идеальные условия для прогулок.',
+            reasoning: 'Основано на исторических сезонных данных Алматы',
+        },
+        en: {
+            winter: 'Winter conditions in Almaty: elevated smog due to coal heating. It is recommended to stay indoors and use N95 masks outside.',
+            summer: 'Summer conditions in Almaty: good air quality and comfortable conditions for outdoor activity.',
+            reasoning: 'Based on historical seasonal patterns in Almaty',
+        },
+        kk: {
+            winter: 'Алматыдағы қысқы жағдай: көмір жағуға байланысты смог жоғары. Сыртта N95 маскасын қолдану және үйде көбірек болу ұсынылады.',
+            summer: 'Алматыдағы жазғы жағдай: ауа сапасы жақсы, серуендеуге қолайлы.',
+            reasoning: 'Алматы бойынша тарихи маусымдық деректер негізінде',
+        },
+    } as const
+
+    const locale = text[lang as keyof typeof text] || text.ru
 
     return {
-        prediction: isWinter
-            ? 'Зимние условия в Алматы: Высокий смог из-за угольного отопления. Рекомендуется оставаться в помещении и использовать маски N95 на улице.'
-            : 'Летние условия в Алматы: Хорошее качество воздуха. Идеальные условия для прогулок.',
+        prediction: isWinter ? locale.winter : locale.summer,
         confidence_score: 0.75,
         aqi_prediction: isWinter ? 160 : 45,
         traffic_index_prediction: isWinter ? 65 : 50,
-        reasoning: 'Основано на исторических сезонных данных Алматы',
+        reasoning: locale.reasoning,
         is_mock: true,
     }
 }

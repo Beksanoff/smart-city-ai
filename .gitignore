@@ -43,3 +43,6 @@ htmlcov/
 tmp/
 temp/
 *.tmp
+
+# ML model artifacts (regenerated on build)
+*.pkl

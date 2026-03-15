@@ -1,0 +1,10 @@
+.env
+.env.*
+.git
+.gitignore
+*.md
+__pycache__
+.pytest_cache
+.vscode
+.idea
+models/*.pkl

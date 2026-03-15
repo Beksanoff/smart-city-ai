@@ -109,6 +109,9 @@ def pm25_to_aqi(pm25: float) -> int:
     """
     if pd.isna(pm25) or pm25 < 0:
         return 0
+    # Truncate to 1 decimal place to avoid falling through the 9.0–9.1 gap
+    import math as _math
+    pm25 = _math.floor(pm25 * 10) / 10
     breakpoints = [
         (0.0,   9.0,   0,  50),
         (9.1,  35.4,  51, 100),

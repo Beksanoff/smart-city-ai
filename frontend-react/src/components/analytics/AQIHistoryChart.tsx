@@ -30,7 +30,7 @@ export default function AQIHistoryChart() {
         const byDay: Record<string, { total: number; count: number; dayIndex: number; date: string }> = {}
         weatherHistory.forEach((w) => {
             const d = new Date(w.timestamp)
-            const key = d.toISOString().slice(0, 10)
+            const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
             if (!byDay[key]) {
                 byDay[key] = { total: 0, count: 0, dayIndex: d.getDay(), date: key }
             }
@@ -50,12 +50,12 @@ export default function AQIHistoryChart() {
 
     const hasData = chartData !== null && chartData.length > 0
 
-    const CustomTooltip = ({ active, payload, label }: any) => {
+    const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: Array<{ value?: number }>; label?: string }) => {
         if (!active || !payload?.length) return null
         return (
             <div className="bg-cyber-dark border border-cyber-border rounded-lg px-3 py-2 shadow-lg">
                 <p className="text-xs text-cyber-muted mb-1">{label}</p>
-                <p className="text-sm font-semibold" style={{ color: payload[0]?.value > 100 ? '#ef4444' : '#22d3ee' }}>
+                <p className="text-sm font-semibold" style={{ color: (payload[0]?.value ?? 0) > 100 ? '#ef4444' : '#22d3ee' }}>
                     {t('analytics.aqiValue', { value: payload[0]?.value })}
                 </p>
             </div>

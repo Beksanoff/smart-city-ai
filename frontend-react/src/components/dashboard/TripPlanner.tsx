@@ -33,13 +33,15 @@ function TripPlanner() {
         onSuccess: (data) => setResult(data),
     })
 
-    // Quick date helpers
+    // Quick date helpers — recompute when the calendar day changes
+    const todayKey = fmtDate(new Date()) // changes at midnight
     const presetDates = useMemo(() => {
         const today = new Date()
         const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1)
         const afterTomorrow = new Date(today); afterTomorrow.setDate(today.getDate() + 2)
         return { today: fmtDate(today), tomorrow: fmtDate(tomorrow), after: fmtDate(afterTomorrow) }
-    }, [])
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- todayKey forces recompute when the calendar day changes
+    }, [todayKey])
 
     const selectPreset = (preset: 'today' | 'tomorrow' | 'after') => {
         setDatePreset(preset)
@@ -73,6 +75,15 @@ function TripPlanner() {
     }, [date])
 
     const quickQueries = [t('quickQueries.q1'), t('quickQueries.q2'), t('quickQueries.q3'), t('quickQueries.q4')]
+
+    const confidencePercent = Number.isFinite(result?.confidence_score)
+        ? Math.max(0, Math.min(100, (result?.confidence_score ?? 0) * 100))
+        : 0
+
+    const currentAQI = Number.isFinite(currentData?.weather?.aqi) ? (currentData?.weather?.aqi ?? 0) : 0
+    const currentTraffic = Number.isFinite(currentData?.traffic?.congestion_index)
+        ? (currentData?.traffic?.congestion_index ?? 0)
+        : 0
 
     return (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -227,22 +238,22 @@ function TripPlanner() {
                             <div className="flex items-center justify-between text-sm gap-2 min-w-0">
                                 <span className="text-cyber-muted truncate">{t('planner.confidence')}</span>
                                 <span className="text-cyber-cyan font-mono">
-                                    {(result.confidence_score * 100).toFixed(0)}%
+                                    {confidencePercent.toFixed(0)}%
                                 </span>
                             </div>
                             <div className="h-2 bg-cyber-border rounded-full overflow-hidden">
                                 <div
                                     className="h-full bg-gradient-to-r from-cyber-cyan to-cyber-purple rounded-full"
-                                    style={{ width: `${result.confidence_score * 100}%` }}
+                                    style={{ width: `${confidencePercent}%` }}
                                 />
                             </div>
                         </div>
 
                         {/* График сравнения */}
                         <PredictionChart
-                            currentAQI={currentData?.weather.aqi || 0}
+                            currentAQI={currentAQI}
                             predictedAQI={result.aqi_prediction}
-                            currentTraffic={currentData?.traffic.congestion_index || 0}
+                            currentTraffic={currentTraffic}
                             predictedTraffic={result.traffic_index_prediction}
                         />
 

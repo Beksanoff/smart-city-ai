@@ -2,20 +2,26 @@
 # Pinned versions for reproducibility
 
 # Web framework
-fastapi==0.109.0
-uvicorn[standard]==0.27.0
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
 
 # Data processing
-pandas==2.2.0
-numpy==1.26.3
+pandas==2.2.3
+numpy==1.26.4
 
 # AI/ML
-groq==0.4.2
-scikit-learn==1.8.0
+groq==0.15.0
+scikit-learn==1.6.1
 
 # HTTP client
-httpx==0.26.0
+httpx==0.28.1
 
 # Utilities
-python-dotenv==1.0.0
-pydantic==2.5.3
+python-dotenv==1.0.1
+
+# Validation
+pydantic==2.10.4
+
+# Testing
+pytest==8.3.4
+httpx>=0.28.1

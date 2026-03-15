@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS prediction_logs (
     request_temperature DECIMAL(5,2),
     request_query TEXT,
     prediction TEXT,
-    confidence_score DECIMAL(3,2),
+    confidence_score DECIMAL(5,2),
     aqi_prediction INTEGER,
     traffic_prediction DECIMAL(5,2),
     is_mock BOOLEAN DEFAULT FALSE,

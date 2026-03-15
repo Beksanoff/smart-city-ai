@@ -3,12 +3,13 @@ services:
   postgres:
     image: postgis/postgis:15-3.3
     container_name: smartcity-db
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-smartcity}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_password}
       POSTGRES_DB: ${POSTGRES_DB:-smartcity_db}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"  # Only expose to localhost, not all interfaces
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./migrations:/docker-entrypoint-initdb.d
@@ -26,6 +27,7 @@ services:
       context: ./backend-go
       dockerfile: Dockerfile
     container_name: smartcity-backend
+    restart: unless-stopped
     environment:
       - DATABASE_URL=postgres://${POSTGRES_USER:-smartcity}:${POSTGRES_PASSWORD:-change_me_password}@postgres:5432/${POSTGRES_DB:-smartcity_db}?sslmode=disable
       - OPENWEATHER_API_KEY=${OPENWEATHER_API_KEY:-}
@@ -54,11 +56,12 @@ services:
       context: ./ml-python
       dockerfile: Dockerfile
     container_name: smartcity-ml
+    restart: unless-stopped
     environment:
       - GROQ_API_KEY=${GROQ_API_KEY:-}
       - PYTHONUNBUFFERED=1
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"  # Only expose to localhost, not all interfaces
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
       interval: 10s
@@ -76,6 +79,7 @@ services:
         - VITE_API_URL=${VITE_API_URL:-}
         - VITE_YANDEX_MAPS_API_KEY=${YANDEX_MAPS_API_KEY:-}
     container_name: smartcity-frontend
+    restart: unless-stopped
     environment:
       - VITE_API_URL=${VITE_API_URL:-}
     ports:

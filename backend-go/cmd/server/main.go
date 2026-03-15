@@ -64,7 +64,8 @@ func main() {
 		AppName:      "SmartCity API v1.0",
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
-		BodyLimit:    1 * 1024 * 1024, // 1 MB max request body
+		IdleTimeout:  30 * time.Second, // Prevent slowloris: close idle keep-alive connections
+		BodyLimit:    1 * 1024 * 1024,  // 1 MB max request body
 		ErrorHandler: customErrorHandler,
 	})
 
@@ -128,7 +129,7 @@ type Config struct {
 }
 
 func loadConfig() *Config {
-	return &Config{
+	cfg := &Config{
 		DatabaseURL:       getEnv("DATABASE_URL", ""),
 		OpenWeatherAPIKey: getEnv("OPENWEATHER_API_KEY", ""),
 		TomTomAPIKey:      getEnv("TOMTOM_API_KEY", ""),
@@ -136,6 +137,19 @@ func loadConfig() *Config {
 		Port:              getEnv("PORT", "8080"),
 		Env:               getEnv("GO_ENV", "development"),
 	}
+
+	// Warn about missing configuration at startup
+	if cfg.DatabaseURL == "" {
+		log.Println("WARNING: DATABASE_URL not set — using mock repository")
+	}
+	if cfg.TomTomAPIKey == "" {
+		log.Println("WARNING: TOMTOM_API_KEY not set — traffic data will be simulated")
+	}
+	if cfg.OpenWeatherAPIKey == "" {
+		log.Println("INFO: OPENWEATHER_API_KEY not set (using Open-Meteo, no key needed)")
+	}
+
+	return cfg
 }
 
 func getEnv(key, defaultValue string) string {
@@ -151,7 +165,10 @@ func customErrorHandler(c *fiber.Ctx, err error) error {
 
 	if e, ok := err.(*fiber.Error); ok {
 		code = e.Code
-		message = e.Message
+		// Only expose error messages for client errors (4xx), not server errors
+		if code >= 400 && code < 500 {
+			message = e.Message
+		}
 	}
 
 	return c.Status(code).JSON(fiber.Map{

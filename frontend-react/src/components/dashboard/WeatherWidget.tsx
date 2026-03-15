@@ -13,16 +13,18 @@ function WeatherWidget({ data, isLoading }: WeatherWidgetProps) {
     if (isLoading || !data) {
         return (
             <div className="cyber-card animate-pulse">
-                <div className="h-32 bg-cyber-border rounded-lg" />
+                <div className="h-64 bg-cyber-border rounded-lg" />
             </div>
         )
     }
 
     const getWeatherIcon = (description: string) => {
         const desc = description.toLowerCase()
+        if (desc.includes('thunderstorm')) return '⛈️'
+        if (desc.includes('drizzle')) return '🌦️'
         if (desc.includes('snow')) return '❄️'
         if (desc.includes('rain')) return '🌧️'
-        if (desc.includes('cloud')) return '☁️'
+        if (desc.includes('cloud') || desc.includes('overcast')) return '☁️'
         if (desc.includes('clear')) return '☀️'
         if (desc.includes('fog')) return '🌫️'
         return '🌤️'
@@ -33,6 +35,11 @@ function WeatherWidget({ data, isLoading }: WeatherWidgetProps) {
         const translated = t(key)
         return translated !== key ? translated : desc
     }
+
+    const visibilityKm =
+        typeof data.visibility === 'number' && Number.isFinite(data.visibility)
+            ? `${(data.visibility / 1000).toFixed(1)} ${t('weather.km')}`
+            : 'N/A'
 
     return (
         <div className="cyber-card">
@@ -72,7 +79,7 @@ function WeatherWidget({ data, isLoading }: WeatherWidgetProps) {
                 <div className="flex items-center gap-2 min-w-0">
                     <Eye className="w-4 h-4 text-cyber-purple shrink-0" />
                     <span className="text-cyber-muted truncate">{t('weather.visibility')}</span>
-                    <span className="ml-auto shrink-0">{(data.visibility / 1000).toFixed(1)} {t('weather.km')}</span>
+                    <span className="ml-auto shrink-0">{visibilityKm}</span>
                 </div>
             </div>
         </div>

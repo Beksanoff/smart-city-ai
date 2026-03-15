@@ -16,9 +16,10 @@ Safeguards:
 
 import logging
 import hashlib
+import math
 import pickle
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any
 
 import numpy as np
 import pandas as pd
@@ -46,6 +47,8 @@ def pm25_to_aqi(pm25: float) -> int:
     """
     if pm25 < 0 or np.isnan(pm25):
         return 0
+    # Truncate to 1 decimal place per EPA standard (avoid gap at 9.0-9.1)
+    pm25 = math.floor(pm25 * 10) / 10
     # 2024 revised breakpoints (88 FR 5558, effective Feb 7 2024)
     breakpoints = [
         (0.0, 9.0, 0, 50),
@@ -75,6 +78,8 @@ class SmartCityMLModel:
     PM25_MODEL_PATH = MODEL_DIR / "pm25_model.pkl"
     TRAFFIC_MODEL_PATH = MODEL_DIR / "traffic_model.pkl"
     SCALER_PATH = MODEL_DIR / "scaler.pkl"
+    PM25_SCALER_PATH = MODEL_DIR / "pm25_scaler.pkl"
+    TRAFFIC_SCALER_PATH = MODEL_DIR / "traffic_scaler.pkl"
     METRICS_PATH = MODEL_DIR / "metrics.pkl"
     HASH_PATH = MODEL_DIR / "checksums.txt"
 
@@ -95,7 +100,8 @@ class SmartCityMLModel:
     def __init__(self):
         self.pm25_model: Optional[Any] = None
         self.traffic_model: Optional[Any] = None
-        self.scaler: Optional[Any] = None
+        self.pm25_scaler: Optional[Any] = None
+        self.traffic_scaler: Optional[Any] = None
         self.metrics: Dict[str, Any] = {}
         self.is_trained = False
         self.feature_importance: Dict[str, Dict[str, float]] = {}
@@ -151,12 +157,17 @@ class SmartCityMLModel:
         X_traffic_train_raw, X_traffic_test_raw = X_traffic_all[:split_traffic], X_traffic_all[split_traffic:]
         y_traffic_train, y_traffic_test = y_traffic_all[:split_traffic], y_traffic_all[split_traffic:]
 
-        # Scale features -- fit ONLY on training data (no data snooping)
-        self.scaler = StandardScaler()
-        X_pm25_train = self.scaler.fit_transform(X_pm25_train_raw)
-        X_pm25_test = self.scaler.transform(X_pm25_test_raw)
-        X_traffic_train = self.scaler.transform(X_traffic_train_raw)
-        X_traffic_test = self.scaler.transform(X_traffic_test_raw)
+        # Scale features -- separate scalers per model, fit ONLY on training data (no data snooping)
+        # Each model may have different feature distributions (PM2.5 training excludes
+        # interpolated rows), so fitting a single scaler on one subset and applying it
+        # to the other would distort the feature space.
+        self.pm25_scaler = StandardScaler()
+        X_pm25_train = self.pm25_scaler.fit_transform(X_pm25_train_raw)
+        X_pm25_test = self.pm25_scaler.transform(X_pm25_test_raw)
+
+        self.traffic_scaler = StandardScaler()
+        X_traffic_train = self.traffic_scaler.fit_transform(X_traffic_train_raw)
+        X_traffic_test = self.traffic_scaler.transform(X_traffic_test_raw)
 
         # --- PM2.5 Model (GradientBoosting -- meteo -> PM2.5 concentration) ---
         self.pm25_model = GradientBoostingRegressor(
@@ -341,10 +352,11 @@ class SmartCityMLModel:
             avg_temp_7d=avg_temp_7d,
         )
 
-        X = self.scaler.transform([features])
+        X_pm25 = self.pm25_scaler.transform([features])
+        X_traffic = self.traffic_scaler.transform([features])
 
-        pm25_pred = float(self.pm25_model.predict(X)[0])
-        traffic_pred = float(self.traffic_model.predict(X)[0])
+        pm25_pred = float(self.pm25_model.predict(X_pm25)[0])
+        traffic_pred = float(self.traffic_model.predict(X_traffic)[0])
 
         # Clamp PM2.5 to valid range
         pm25_pred = max(0, min(500, pm25_pred))
@@ -561,7 +573,8 @@ class SmartCityMLModel:
             for name, path, obj in [
                 ("pm25_model", self.PM25_MODEL_PATH, self.pm25_model),
                 ("traffic_model", self.TRAFFIC_MODEL_PATH, self.traffic_model),
-                ("scaler", self.SCALER_PATH, self.scaler),
+                ("pm25_scaler", self.PM25_SCALER_PATH, self.pm25_scaler),
+                ("traffic_scaler", self.TRAFFIC_SCALER_PATH, self.traffic_scaler),
                 ("metrics", self.METRICS_PATH, self.metrics),
             ]:
                 with open(path, "wb") as f:
@@ -582,38 +595,71 @@ class SmartCityMLModel:
         if not SKLEARN_AVAILABLE:
             return False
         try:
-            if all(p.exists() for p in [self.PM25_MODEL_PATH, self.TRAFFIC_MODEL_PATH, self.SCALER_PATH]):
-                # Verify checksums if available
-                if self.HASH_PATH.exists():
-                    expected = {}
-                    for line in self.HASH_PATH.read_text().strip().split("\n"):
-                        name, h = line.split(":", 1)
-                        expected[name] = h
+            # Support both new (separate scalers) and old (single scaler) layouts
+            has_separate_scalers = self.PM25_SCALER_PATH.exists() and self.TRAFFIC_SCALER_PATH.exists()
+            has_legacy_scaler = self.SCALER_PATH.exists()
 
-                    for name, path in [
-                        ("pm25_model", self.PM25_MODEL_PATH),
-                        ("traffic_model", self.TRAFFIC_MODEL_PATH),
-                        ("scaler", self.SCALER_PATH),
-                    ]:
-                        if name in expected:
-                            actual = self._compute_file_hash(path)
-                            if actual != expected[name]:
-                                logger.error(f"Checksum mismatch for {name}! Expected {expected[name][:16]}..., got {actual[:16]}...")
-                                return False
-                    logger.info("Model checksums verified")
+            if not all(p.exists() for p in [self.PM25_MODEL_PATH, self.TRAFFIC_MODEL_PATH]):
+                return False
+            if not has_separate_scalers and not has_legacy_scaler:
+                return False
 
-                with open(self.PM25_MODEL_PATH, "rb") as f:
-                    self.pm25_model = pickle.load(f)
-                with open(self.TRAFFIC_MODEL_PATH, "rb") as f:
-                    self.traffic_model = pickle.load(f)
+            # Verify checksums if available
+            if self.HASH_PATH.exists():
+                expected = {}
+                for line in self.HASH_PATH.read_text().strip().split("\n"):
+                    name, h = line.split(":", 1)
+                    expected[name] = h
+
+                check_files = [
+                    ("pm25_model", self.PM25_MODEL_PATH),
+                    ("traffic_model", self.TRAFFIC_MODEL_PATH),
+                ]
+                if has_separate_scalers:
+                    check_files += [
+                        ("pm25_scaler", self.PM25_SCALER_PATH),
+                        ("traffic_scaler", self.TRAFFIC_SCALER_PATH),
+                    ]
+                elif has_legacy_scaler:
+                    check_files.append(("scaler", self.SCALER_PATH))
+
+                for name, path in check_files:
+                    if name in expected:
+                        actual = self._compute_file_hash(path)
+                        if actual != expected[name]:
+                            logger.error(
+                                f"Checksum mismatch for {name}! "
+                                f"Expected {expected[name][:16]}..., "
+                                f"got {actual[:16]}..."
+                            )
+                            return False
+                logger.info("Model checksums verified")
+
+            with open(self.PM25_MODEL_PATH, "rb") as f:
+                self.pm25_model = pickle.load(f)
+            with open(self.TRAFFIC_MODEL_PATH, "rb") as f:
+                self.traffic_model = pickle.load(f)
+
+            if has_separate_scalers:
+                with open(self.PM25_SCALER_PATH, "rb") as f:
+                    self.pm25_scaler = pickle.load(f)
+                with open(self.TRAFFIC_SCALER_PATH, "rb") as f:
+                    self.traffic_scaler = pickle.load(f)
+                logger.info("Loaded separate PM2.5 and traffic scalers")
+            else:
+                # Backward compat: old single scaler used for both
                 with open(self.SCALER_PATH, "rb") as f:
-                    self.scaler = pickle.load(f)
-                if self.METRICS_PATH.exists():
-                    with open(self.METRICS_PATH, "rb") as f:
-                        self.metrics = pickle.load(f)
-                self.is_trained = True
-                logger.info("Loaded pre-trained models from disk")
-                return True
+                    legacy_scaler = pickle.load(f)
+                self.pm25_scaler = legacy_scaler
+                self.traffic_scaler = legacy_scaler
+                logger.warning("Loaded legacy single scaler for both models — retrain recommended")
+
+            if self.METRICS_PATH.exists():
+                with open(self.METRICS_PATH, "rb") as f:
+                    self.metrics = pickle.load(f)
+            self.is_trained = True
+            logger.info("Loaded pre-trained models from disk")
+            return True
         except Exception as e:
             logger.error(f"Failed to load models: {e}")
         return False
@@ -629,7 +675,7 @@ class SmartCityMLModel:
             "model_files_exist": self.PM25_MODEL_PATH.exists(),
             "pipeline": "meteo -> PM2.5 (ML) -> AQI (EPA 2024 formula)",
             "validation": "TimeSeriesSplit (5 folds, no temporal leakage)",
-            "scaler": "StandardScaler fit on train split only (no data snooping)",
+            "scaler": "Separate StandardScaler per model, each fit on its own train split (no data snooping)",
             "rolling_features": "shift(1) before rolling -- excludes current day to prevent target leakage",
             "lag_strategy": (
                 "pm25_lag1/pm25_rolling7: use real-time data when available, "
@@ -637,8 +683,16 @@ class SmartCityMLModel:
                 "(confidence penalty applied)"
             ),
             "data_quality": {
-                "pm25_source": "OpenAQ US Embassy sensor (2020-04-09+), ~99 days seasonal interpolation (pre-2020-04-09)",
-                "traffic_source": "Rule-based synthesis from Almaty transport patterns (no real-time historical API available)",
-                "pm10_no2_so2_ozone": "Excluded from model features (partially synthetic)",
+                "pm25_source": (
+                    "OpenAQ US Embassy sensor (2020-04-09+), "
+                    "~99 days seasonal interpolation (pre-2020-04-09)"
+                ),
+                "traffic_source": (
+                    "Rule-based synthesis from Almaty transport patterns "
+                    "(no real-time historical API available)"
+                ),
+                "pm10_no2_so2_ozone": (
+                    "Excluded from model features (partially synthetic)"
+                ),
             },
         }

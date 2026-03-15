@@ -30,7 +30,18 @@ export const ru = {
     km: 'км',
   },
   weatherDesc: {
+    // Open-Meteo WMO codes (from Go wmoToDescription)
     'clear sky': 'Ясно',
+    'partly cloudy': 'Переменная облачность',
+    'fog': 'Туман',
+    'drizzle': 'Морось',
+    'rain': 'Дождь',
+    'snow': 'Снег',
+    'rain showers': 'Ливень',
+    'snow showers': 'Снегопад',
+    'thunderstorm': 'Гроза',
+    'cloudy': 'Облачно',
+    // Legacy OpenWeatherMap keys (backward compat)
     'few clouds': 'Малооблачно',
     'scattered clouds': 'Переменная облачность',
     'broken clouds': 'Облачно',
@@ -39,8 +50,6 @@ export const ru = {
     'moderate rain': 'Умеренный дождь',
     'heavy rain': 'Сильный дождь',
     'light snow': 'Небольшой снег',
-    snow: 'Снег',
-    fog: 'Туман',
     mist: 'Дымка',
   },
   traffic: {

@@ -27,8 +27,8 @@ type WeatherService struct {
 }
 
 // NewWeatherService creates a weather service using Open-Meteo.
-// The apiKey param is kept for backward compatibility but is unused.
-func NewWeatherService(apiKey string) *WeatherService {
+// No API key needed — Open-Meteo is free and keyless.
+func NewWeatherService(_ string) *WeatherService {
 	return &WeatherService{
 		httpClient: &http.Client{Timeout: 10 * time.Second},
 		cacheTTL:   5 * time.Minute, // Cache 5 min (Open-Meteo updates every 15 min)
@@ -46,6 +46,7 @@ type OpenMeteoCurrentResponse struct {
 		WeatherCode        int     `json:"weather_code"`
 		WindSpeed10m       float64 `json:"wind_speed_10m"`
 		SurfacePressure    float64 `json:"surface_pressure"`
+		Visibility         float64 `json:"visibility"`
 	} `json:"current"`
 }
 
@@ -107,7 +108,7 @@ func (s *WeatherService) GetCurrentWeather(ctx context.Context) (domain.Weather,
 // fetchOpenMeteoWeather queries Open-Meteo Forecast API for current conditions
 func (s *WeatherService) fetchOpenMeteoWeather(ctx context.Context) (domain.Weather, error) {
 	url := fmt.Sprintf(
-		"https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,surface_pressure&timezone=Asia%%2FAlmaty",
+		"https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,surface_pressure,visibility&timezone=Asia%%2FAlmaty",
 		domain.AlmatyCenterLat, domain.AlmatyCenterLon,
 	)
 
@@ -132,7 +133,19 @@ func (s *WeatherService) fetchOpenMeteoWeather(ctx context.Context) (domain.Weat
 	}
 
 	c := omResp.Current
-	description, icon := wmoToDescription(c.WeatherCode)
+	// Determine local hour for day/night icon selection
+	loc, locErr := time.LoadLocation("Asia/Almaty")
+	if locErr != nil {
+		loc = time.FixedZone("Asia/Almaty", 5*3600)
+	}
+	localHour := time.Now().In(loc).Hour()
+	description, icon := wmoToDescription(c.WeatherCode, localHour)
+
+	// Use real visibility from API; fall back to 10 km if zero/missing
+	visibility := int(c.Visibility)
+	if visibility <= 0 {
+		visibility = 10000
+	}
 
 	return domain.Weather{
 		Temperature: math.Round(c.Temperature2m*10) / 10,
@@ -141,7 +154,7 @@ func (s *WeatherService) fetchOpenMeteoWeather(ctx context.Context) (domain.Weat
 		Description: description,
 		Icon:        icon,
 		WindSpeed:   math.Round(c.WindSpeed10m/3.6*10) / 10, // km/h → m/s
-		Visibility:  10000,
+		Visibility:  visibility,
 		Pressure:    int(math.Round(c.SurfacePressure)),
 		City:        "Almaty",
 		Country:     "KZ",
@@ -187,29 +200,37 @@ func (s *WeatherService) fetchOpenMeteoAQI(ctx context.Context) (int, error) {
 	return aqi, nil
 }
 
-// wmoToDescription converts WMO weather code to description + icon
-func wmoToDescription(code int) (string, string) {
+// wmoToDescription converts WMO weather code to description + icon.
+// hour is used to select day ("d") or night ("n") icon variants.
+func wmoToDescription(code int, hour int) (string, string) {
+	suffix := "d"
+	if hour < 6 || hour >= 21 {
+		suffix = "n"
+	}
+
 	switch {
 	case code == 0:
-		return "Clear sky", "01d"
-	case code <= 3:
-		return "Partly cloudy", "02d"
+		return "Clear sky", "01" + suffix
+	case code <= 2:
+		return "Partly cloudy", "02" + suffix
+	case code == 3:
+		return "Overcast", "04" + suffix
 	case code == 45 || code == 48:
-		return "Fog", "50d"
+		return "Fog", "50" + suffix
 	case code >= 51 && code <= 57:
-		return "Drizzle", "09d"
+		return "Drizzle", "09" + suffix
 	case code >= 61 && code <= 67:
-		return "Rain", "10d"
+		return "Rain", "10" + suffix
 	case code >= 71 && code <= 77:
-		return "Snow", "13d"
+		return "Snow", "13" + suffix
 	case code >= 80 && code <= 82:
-		return "Rain showers", "09d"
+		return "Rain showers", "09" + suffix
 	case code >= 85 && code <= 86:
-		return "Snow showers", "13d"
+		return "Snow showers", "13" + suffix
 	case code >= 95:
-		return "Thunderstorm", "11d"
+		return "Thunderstorm", "11" + suffix
 	default:
-		return "Cloudy", "04d"
+		return "Cloudy", "04" + suffix
 	}
 }
 
@@ -218,6 +239,9 @@ func wmoToDescription(code int) (string, string) {
 // Key change: "Good" category lowered from 12.0 to 9.0 µg/m³,
 // "Very Unhealthy" ceiling lowered from 150.4 to 125.4 µg/m³.
 func pm25ToAQI(pm25 float64) int {
+	// Truncate to 1 decimal place to avoid falling through the 9.0–9.1 gap
+	pm25 = math.Floor(pm25*10) / 10
+
 	type bp struct {
 		cLow, cHigh float64
 		iLow, iHigh int

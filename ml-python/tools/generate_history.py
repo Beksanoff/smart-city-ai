@@ -9,6 +9,9 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import random
 
+# Fixed seed for reproducible dataset generation
+random.seed(42)
+
 
 def generate_almaty_history(
     start_date: str = "2023-01-01",
@@ -97,6 +100,31 @@ def generate_almaty_history(
         # Wind speed (km/h)
         wind = max(0, random.gauss(8, 5))
         
+        # PM2.5 estimated from AQI (inverse of EPA breakpoints, rough)
+        if aqi <= 50:
+            pm25 = round(aqi / 50 * 9.0, 1)
+        elif aqi <= 100:
+            pm25 = round(9.1 + (aqi - 51) / 49 * (35.4 - 9.1), 1)
+        elif aqi <= 150:
+            pm25 = round(35.5 + (aqi - 101) / 49 * (55.4 - 35.5), 1)
+        else:
+            pm25 = round(55.5 + (aqi - 151) / 49 * (125.4 - 55.5), 1)
+        pm25 = max(0, pm25)
+        
+        # Precipitation (mm) – higher in spring/autumn, rare in winter
+        if month in [4, 5, 10, 11]:
+            precipitation = round(max(0, random.gauss(3.0, 4.0)), 1)
+        elif month in [6, 7, 8]:
+            precipitation = round(max(0, random.gauss(1.0, 2.5)), 1)
+        else:
+            precipitation = round(max(0, random.gauss(0.5, 1.5)), 1)
+        
+        # WMO weather code
+        weather_code_map = {
+            "clear": 0, "partly_cloudy": 2, "cloudy": 3,
+            "fog": 45, "rain": 61, "snow": 71, "hot": 0,
+        }
+        
         # Weather condition
         if month in [12, 1, 2]:
             conditions = ["snow", "cloudy", "clear", "fog"]
@@ -109,6 +137,7 @@ def generate_almaty_history(
             weights = [0.3, 0.3, 0.2, 0.2]
         
         condition = random.choices(conditions, weights=weights)[0]
+        weather_code = weather_code_map.get(condition, 0)
         
         records.append({
             "date": date,
@@ -116,9 +145,12 @@ def generate_almaty_history(
             "humidity": humidity,
             "wind_speed": round(wind, 1),
             "aqi": aqi,
+            "pm25": pm25,
+            "precipitation": precipitation,
+            "weather_code": weather_code,
             "traffic_index": round(traffic, 1),
             "condition": condition,
-            "is_weekend": is_weekend,
+            "is_weekend": int(is_weekend),
             "month": month,
             "day_of_week": day_of_week
         })

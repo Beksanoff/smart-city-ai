@@ -30,7 +30,18 @@ export const kk = {
     km: 'км',
   },
   weatherDesc: {
+    // Open-Meteo WMO codes (from Go wmoToDescription)
     'clear sky': 'Ашық',
+    'partly cloudy': 'Өзгермелі бұлтты',
+    'fog': 'Тұман',
+    'drizzle': 'Бұршақ жаңбыр',
+    'rain': 'Жаңбыр',
+    'snow': 'Қар',
+    'rain showers': 'Нөсер',
+    'snow showers': 'Қар жауыны',
+    'thunderstorm': 'Найзағай',
+    'cloudy': 'Бұлтты',
+    // Legacy OpenWeatherMap keys (backward compat)
     'few clouds': 'Аз бұлтты',
     'scattered clouds': 'Өзгермелі бұлтты',
     'broken clouds': 'Бұлтты',
@@ -39,8 +50,6 @@ export const kk = {
     'moderate rain': 'Орташа жаңбыр',
     'heavy rain': 'Күшті жаңбыр',
     'light snow': 'Жеңіл қар',
-    snow: 'Қар',
-    fog: 'Тұман',
     mist: 'Тұман',
   },
   traffic: {

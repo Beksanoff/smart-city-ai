@@ -30,9 +30,12 @@ export default function TrafficByHourChart() {
                 byHour[h] = { total: 0, count: 0 }
             }
             trafficHistory.forEach((tr) => {
-                const hour = new Date(tr.timestamp).getHours()
-                byHour[hour].total += tr.congestion_index
-                byHour[hour].count += 1
+                const hour = new Date(tr.timestamp).toLocaleString('en-US', {
+                    hour: 'numeric', hour12: false, timeZone: 'Asia/Almaty',
+                })
+                const h = parseInt(hour, 10)
+                byHour[h].total += tr.congestion_index
+                byHour[h].count += 1
             })
             return {
                 data: Array.from({ length: 24 }, (_, i) => ({
@@ -66,9 +69,9 @@ export default function TrafficByHourChart() {
         return '#10b981'
     }
 
-    const CustomTooltip = ({ active, payload, label }: any) => {
+    const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: Array<{ value?: number }>; label?: string }) => {
         if (!active || !payload?.length) return null
-        const value = payload[0]?.value
+        const value = payload[0]?.value ?? 0
         return (
             <div className="bg-cyber-dark border border-cyber-border rounded-lg px-3 py-2 shadow-lg">
                 <p className="text-xs text-cyber-muted mb-1">{label}</p>

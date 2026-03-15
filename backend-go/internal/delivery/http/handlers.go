@@ -11,6 +11,9 @@ import (
 	"github.com/smartcity/backend/internal/service"
 )
 
+// Pre-compiled regex for date validation (avoid re-compiling on every request)
+var dateRegex = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+
 // Handler contains all HTTP handlers
 type Handler struct {
 	dashboardSvc *service.DashboardService
@@ -29,8 +32,15 @@ func NewHandler(dashboardSvc *service.DashboardService, mlBridge *service.MLBrid
 
 // HealthCheck returns service health status
 func (h *Handler) HealthCheck(c *fiber.Ctx) error {
+	// Verify database connectivity
+	dbStatus := "ok"
+	if err := h.repo.Health(c.Context()); err != nil {
+		dbStatus = "degraded"
+		log.Printf("Health check: DB ping failed: %v", err)
+	}
+
 	return c.JSON(fiber.Map{
-		"status":  "ok",
+		"status":  dbStatus,
 		"service": "smartcity-backend",
 		"version": "1.0.0",
 	})
@@ -95,8 +105,7 @@ func (h *Handler) Predict(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "Query too long (max 1000 characters)")
 	}
 	if req.Date != "" {
-		dateRe := regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
-		if !dateRe.MatchString(req.Date) {
+		if !dateRegex.MatchString(req.Date) {
 			return fiber.NewError(fiber.StatusBadRequest, "Date must be in YYYY-MM-DD format")
 		}
 		// Verify it's a real date (e.g. reject 2025-02-30)
@@ -134,14 +143,14 @@ func (h *Handler) Predict(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to get prediction")
 	}
 
-	// Log prediction to database asynchronously
-	go func() {
+	// Log prediction to database asynchronously (tracked for graceful shutdown)
+	h.dashboardSvc.TrackBackground(func() {
 		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if saveErr := h.repo.SavePredictionLog(bgCtx, req, prediction); saveErr != nil {
 			log.Printf("Failed to save prediction log: %v", saveErr)
 		}
-	}()
+	})
 
 	return c.JSON(fiber.Map{
 		"success": true,
