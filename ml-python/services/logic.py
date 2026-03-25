@@ -238,6 +238,7 @@ class PredictionService:
         stat_aqi, stat_traffic, stat_confidence, base_insight = self._predict_from_data(
             month=month, temperature=effective_temp, is_weekend=is_weekend,
         )
+        has_history_data = bool(stats) or (self.df is not None and not self.df.empty)
 
         # ── Step 3: Blend ML + statistical predictions ──
         # Weights: 70% ML / 30% statistics.
@@ -302,13 +303,36 @@ class PredictionService:
             # _get_groq_prediction_v2 returns None on Groq failure
             if groq_text is not None:
                 prediction_text = groq_text
-                is_mock = False
             else:
                 prediction_text = base_insight
-                is_mock = True  # signal degraded mode
         else:
             prediction_text = base_insight
-            is_mock = not bool(self.groq_client)
+
+        # Clarify statistical traffic basis in non-LLM responses.
+        if prediction_text == base_insight and has_history_data and stats:
+            period = self._history_period_label()
+            if lang == "ru":
+                day_type = "выходной день" if is_weekend else "будний день"
+                basis_note = (
+                    f"Основа трафика: среднее по этому месяцу за {stats.get('records', '?')} исторических дней "
+                    f"({period}), с поправкой на {day_type}."
+                )
+            elif lang == "kk":
+                day_type = "демалыс күні" if is_weekend else "жұмыс күні"
+                basis_note = (
+                    f"Трафик негізі: осы ай бойынша {stats.get('records', '?')} тарихи күннің орташа мәні "
+                    f"({period}), {day_type} түзетуімен."
+                )
+            else:
+                day_type = "weekend" if is_weekend else "weekday"
+                basis_note = (
+                    f"Traffic basis: same-month historical average over {stats.get('records', '?')} days "
+                    f"({period}), adjusted for {day_type}."
+                )
+            prediction_text = f"{prediction_text} {basis_note}"
+
+        # `is_mock` should indicate data provenance, not LLM availability.
+        is_mock = not has_history_data
 
         return {
             "prediction": prediction_text,
@@ -487,6 +511,19 @@ class PredictionService:
         else:
             lines.append("Совет: Условия благоприятные для поездок.")
         return " ".join(lines)
+
+    def _history_period_label(self) -> str:
+        """Return historical data year range like '2020-2026'."""
+        if self.df is None or self.df.empty or "date" not in self.df.columns:
+            return "historical years"
+        try:
+            start_year = int(self.df["date"].min().year)
+            end_year = int(self.df["date"].max().year)
+            if start_year == end_year:
+                return str(start_year)
+            return f"{start_year}-{end_year}"
+        except Exception:
+            return "historical years"
 
     # ── Enhanced Groq v3 prompt (multilingual) ────────────────────────────
 
