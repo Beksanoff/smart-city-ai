@@ -1,343 +1,418 @@
-# Smart City AI Core: Almaty Urban Monitoring System
+# PROJECT ARCHITECTURAL DOCUMENTATION
 
-## Project Overview
+## 1. Цель проекта
 
-A scalable, microservices-based dashboard providing:
-1. **Live Monitor** -- Real-time urban data visualization (weather, traffic, AQI)
-2. **Analytics** -- Historical charts with real API data
-3. **Trip Planner** -- AI-driven predictions using ML models and Groq LLM
+`Smart City AI Core` — это система для наблюдения и прогнозирования городских событий в Алматы.
 
-**Target City:** Almaty, Kazakhstan (43.2389N, 76.8897E)
+Проект отвечает на 3 разных вопроса:
 
----
+- `Мониторинг`: что происходит в городе сейчас?
+- `Планировщик`: что, скорее всего, произойдет в выбранную дату?
+- `Аналитика`: какие исторические закономерности уже видны и как выглядит ближайший прогноз?
 
-## Architecture
+## 2. Главная идея простыми словами
+
+В системе есть 3 типа данных:
+
+### 1. Live data
+
+Это данные "прямо сейчас":
+- текущая погода;
+- текущий AQI;
+- текущий трафик;
+- карта и инциденты.
+
+### 2. Historical data
+
+Это историческая база для дипломной аналитики:
+- файл `ml-python/data/almaty_history.csv`;
+- данные по Алматы с 2020 по 2026 год;
+- на этих данных считаются сезонность, корреляции и месячные risk-паттерны.
+
+### 3. Forecast data
+
+Это данные про ближайшее будущее:
+- Open-Meteo forecast на 7 дней;
+- ML-прогноз AQI и трафика;
+- текстовое объяснение от LLM, если включен Groq.
+
+Ключевой принцип текущей версии:
+
+> Историческая аналитика идет из CSV, а будущий прогноз идет из forecast + ML.  
+> Поэтому аналитика не зависит от того, когда вы локально запустили проект.
+
+## 3. Компоненты системы
+
+| Компонент | Что делает |
+|---|---|
+| `Frontend React` | Показывает вкладки, графики, карту и формы |
+| `Go Backend` | Собирает live-данные, валидирует запросы, общается с БД и ML |
+| `Python ML Service` | Строит прогнозы, считает аналитику, работает с historical CSV |
+| `PostgreSQL + PostGIS` | Хранит live snapshots и prediction logs |
+| `Open-Meteo` | Дает погоду, качество воздуха и weather forecast |
+| `TomTom` | Дает live traffic flow и incidents |
+| `Yandex Maps JS API` | Показывает карту на фронтенде |
+| `Groq` | Делает текстовый AI-ответ в Планировщике |
+
+## 4. Простая схема
 
 ```mermaid
-graph TB
-    subgraph Frontend["Frontend<br/>React + Vite + TypeScript"]
-        UI[Dashboard UI]
-        YMaps[Yandex Maps 2.1]
-        TQ[TanStack Query]
-    end
+graph TD
+    U[User in browser]
+    FE[Frontend React]
+    GO[Go Backend API]
+    ML[Python ML Service]
+    DB[(PostgreSQL)]
+    CSV[almaty_history.csv]
+    OM[Open-Meteo]
+    TT[TomTom]
+    YM[Yandex Maps JS API]
+    GQ[Groq]
 
-    subgraph GoBackend["Go Backend<br/>Fiber + Clean Architecture"]
-        API[API Gateway :8080]
-        SVC[Services Layer]
-        REPO[Repository Layer]
-    end
+    U --> FE
+    FE --> GO
+    FE --> YM
 
-    subgraph MLService["Python ML Service<br/>FastAPI + scikit-learn"]
-        PRED[/predict :8000]
-        GROQ[Groq AI Client]
-        SKLEARN[ML Models]
-    end
+    GO --> OM
+    GO --> TT
+    GO --> DB
+    GO --> ML
 
-    subgraph External["External APIs"]
-        OM[Open-Meteo]
-        TT[TomTom Traffic]
-        YA[Yandex Maps JS API]
-    end
-
-    subgraph Infra["Infrastructure"]
-        PG[(PostgreSQL 15<br/>+ PostGIS)]
-    end
-
-    UI --> TQ --> API
-    YMaps --> YA
-    API --> SVC --> REPO --> PG
-    SVC --> OM
-    SVC --> TT
-    SVC --> PRED
-    PRED --> GROQ
-    PRED --> SKLEARN
+    ML --> CSV
+    ML --> OM
+    ML --> GQ
 ```
 
----
+## 5. Кто за что отвечает
 
-## Folder Structure
+### Frontend
 
-```
-antigravity_smartcity/
-├── .github/workflows/          # CI/CD
-│   └── ci.yml                  # 4-job pipeline (Go, Python, Frontend, Docker)
-│
-├── backend-go/                 # Go API Gateway
-│   ├── cmd/server/             # Application entry point
-│   ├── internal/
-│   │   ├── domain/             # Entities + Interfaces (NO external deps)
-│   │   ├── repository/         # PostgreSQL + Mock implementations
-│   │   ├── service/            # Business logic + tests (32 test cases)
-│   │   └── delivery/http/      # HTTP handlers + router
-│   └── pkg/utils/              # Shared utilities (haversine, clamp, lerp)
-│
-├── ml-python/                  # Python ML Microservice
-│   ├── main.py                 # FastAPI application
-│   ├── services/
-│   │   ├── logic.py            # Predictions, Groq LLM, statistics
-│   │   ├── ml_model.py         # scikit-learn models, EPA AQI calculation
-│   │   └── forecast.py         # Open-Meteo forecast fetching
-│   ├── tests/                  # Pytest tests (36 test cases)
-│   ├── models/                 # Trained .pkl files (gitignored)
-│   ├── data/                   # almaty_history.csv (2234 days)
-│   └── tools/                  # Data generation scripts
-│
-├── frontend-react/             # React Dashboard
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── dashboard/      # WeatherWidget, TrafficWidget, AQI, TripPlanner
-│   │   │   ├── analytics/      # AQIHistoryChart, TrafficByHourChart, CorrelationChart
-│   │   │   └── map/            # AlmatyMap (Yandex Maps integration)
-│   │   ├── __tests__/          # Vitest tests (7 test cases)
-│   │   ├── locales/            # ru.ts, en.ts, kk.ts
-│   │   └── services/           # API client + fallback mock
-│   └── nginx.conf              # Nginx configuration
-│
-├── migrations/                 # 001_init.sql (PostGIS + tables)
-├── docker-compose.yml          # 4 services
-├── Makefile                    # Management commands (up, down, test, lint)
-└── .env.example                # Environment variables template
-```
+Frontend:
+- показывает `Мониторинг`, `Аналитику`, `Планировщик`;
+- строит графики;
+- отправляет запросы в backend;
+- отображает карту Яндекс;
+- не считает сложную логику сам.
 
-### Why This Structure?
+То есть фронтенд — это слой отображения.
 
-| Directory | Purpose |
-|-----------|---------|
-| `cmd/` | Go convention for application entry points |
-| `internal/` | Private packages, not importable by external code |
-| `domain/` | Pure business entities, zero external dependencies (SOLID) |
-| `repository/` | Implements interfaces defined in domain (Dependency Inversion) |
-| `service/` | Business logic with unit tests |
-| `pkg/` | Public utilities, can be imported by other projects |
+### Go Backend
 
----
+Go backend:
+- получает запросы от фронта;
+- забирает текущие weather/traffic данные;
+- сохраняет live snapshots в PostgreSQL;
+- обогащает запросы к ML service текущим контекстом;
+- возвращает единый JSON-ответ фронту.
 
-## Quick Start
+То есть backend — это центральный координатор.
 
-### Prerequisites
-- Docker & Docker Compose v2+
-- API Keys (optional -- mocks work without them)
+### Python ML Service
 
-### 1. Clone and Configure
+ML service:
+- читает historical CSV;
+- строит monthly statistics и correlations;
+- берет weather forecast на 7 дней;
+- считает AQI и traffic forecast;
+- отдает payload для аналитики;
+- по запросу формирует текстовый ответ через Groq.
 
-```bash
-git clone https://github.com/Beksanoff/smart-city-ai.git
-cd smart-city-ai
-cp .env.example .env
-# Edit .env with your API keys (optional)
-```
+То есть ML service — это слой прогнозов и аналитики.
 
-### 2. Start All Services
+### PostgreSQL
 
-```bash
-docker compose up -d --build
-# or: make up
-```
+База хранит:
+- `weather_data`
+- `traffic_data`
+- `heatmap_snapshots`
+- `prediction_logs`
 
-### 3. Verify Health
+Важно:
+- база не является главным источником исторической аналитики;
+- она нужна для live snapshots и логов;
+- исторические графики теперь не зависят от session-history в БД.
 
-```bash
-docker compose ps              # All 4 should be "Up (healthy)"
-curl http://localhost:8080/health
-curl http://localhost:8000/health
-```
+## 6. Как работает каждая вкладка
 
-### 4. Access Dashboard
+## 6.1 Мониторинг
 
-Open http://localhost:3000
+### Что показывает
 
----
+- текущую погоду;
+- текущий AQI;
+- текущий трафик;
+- карту города.
 
-## API Reference
-
-### Go Backend (`:8080`)
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Health check |
-| `/api/v1/dashboard` | GET | Aggregated live data (weather + traffic) |
-| `/api/v1/weather` | GET | Current Almaty weather + AQI |
-| `/api/v1/traffic` | GET | Traffic: 24 segments, incidents, congestion index |
-| `/api/v1/history/weather?hours=N` | GET | Weather history for N hours (max 720) |
-| `/api/v1/history/traffic?hours=N` | GET | Traffic history for N hours |
-| `/api/v1/predict` | POST | AI prediction (proxied to ML Service) |
-| `/api/v1/stats` | GET | Statistics (proxied to ML Service) |
-
-### Python ML Service (`:8000`)
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Health check |
-| `/predict` | POST | AI prediction (Groq LLM + ML models + statistics) |
-| `/stats` | GET | Monthly averages, correlations, 2234-day dataset |
-| `/model/info` | GET | ML model metrics (R², MAE, training date) |
-| `/model/retrain` | POST | Retrain ML models from historical data |
-
----
-
-## Module Workflows
-
-### Module A: Real-Time Data
+### Как идет поток данных
 
 ```mermaid
 sequenceDiagram
-    participant React
-    participant Go
-    participant OpenMeteo as Open-Meteo
-    participant TomTom
+    participant FE as Frontend
+    participant GO as Go Backend
+    participant OM as Open-Meteo
+    participant TT as TomTom
+    participant DB as PostgreSQL
 
-    React->>Go: GET /api/v1/dashboard
-    par Concurrent Fetch
-        Go->>OpenMeteo: Weather + PM2.5 API
-        Go->>TomTom: Traffic Flow + Incidents
+    FE->>GO: GET /api/v1/dashboard
+    par Live requests
+        GO->>OM: current weather + air quality
+        GO->>TT: traffic flow + incidents
     end
-    Note over Go: Calculate EPA AQI from PM2.5
-    Note over Go: Compute Congestion Index
-    Go->>React: JSON Response
+    GO->>DB: save weather snapshot
+    GO->>DB: save traffic snapshot
+    GO-->>FE: dashboard JSON
 ```
 
-### Module B: AI Prediction
+### Что важно понимать
+
+- это именно live-monitoring;
+- здесь данные могут быть реальными или mock, если API недоступен;
+- эти данные не должны подменять собой историческую аналитику.
+
+## 6.2 Планировщик
+
+### Что делает
+
+Пользователь задает вопрос про выбранную дату:
+- "Нужна ли маска в субботу?"
+- "Когда лучше выехать завтра?"
+- "Какие будут пробки вечером?"
+
+### Как идет поток данных
 
 ```mermaid
 sequenceDiagram
-    participant React
-    participant Go
-    participant Python
-    participant Groq
+    participant FE as Frontend
+    participant GO as Go Backend
+    participant ML as Python ML
+    participant CSV as Historical CSV
+    participant OM as Open-Meteo Forecast
+    participant GQ as Groq
+    participant DB as PostgreSQL
 
-    React->>Go: POST /api/v1/predict
-    Note over Go: Validate input (date, temperature, query length)
-    Note over Go: Enrich with live weather + traffic data
-    Go->>Python: POST /predict (enriched payload)
-    Note over Python: Run GradientBoosting (PM2.5)
-    Note over Python: Run RandomForest (traffic)
-    Note over Python: Blend 70% ML + 30% statistical
-    Python->>Groq: Prompt with ML context
-    Groq->>Python: AI Response
-    Python->>Go: Prediction JSON
-    Go->>React: Response
+    FE->>GO: POST /api/v1/predict
+    GO->>GO: validate request
+    GO->>GO: load current live context
+    GO->>ML: POST /predict
+    ML->>CSV: read historical patterns
+    ML->>OM: get target-day forecast
+    ML->>ML: calculate AQI and traffic forecast
+    opt Groq enabled
+        ML->>GQ: build natural-language answer
+        GQ-->>ML: explanation text
+    end
+    ML-->>GO: prediction result
+    GO->>DB: save prediction log
+    GO-->>FE: final response
 ```
 
----
+### Самое важное изменение
 
-## ML Models
+Раньше будущий прогноз мог частично опираться на текущую температуру.
 
-### PM2.5 Prediction (GradientBoosting)
-- **R²:** 0.5273 (CV: 0.2942 +/- 0.4282)
-- **Features:** temperature, humidity, wind_speed, month, day_of_week, is_winter
-- **Scaler:** Separate `pm25_scaler` (StandardScaler)
+Теперь логика исправлена:
+- для будущих дат используется `forecast выбранного дня`;
+- текущая температура нужна только как live context для "сегодня";
+- численные значения строятся моделью, а не LLM.
 
-### Traffic Prediction (RandomForest)
-- **R²:** 0.7663 (CV: 0.7464 +/- 0.0138)
-- **Features:** hour, day_of_week, month, temperature, is_rush_hour
-- **Scaler:** Separate `traffic_scaler` (StandardScaler)
+### Роль LLM
 
-### AQI Calculation
-- **Standard:** EPA 2024 breakpoints
-- **Input:** PM2.5 concentration
-- **Fix:** `math.floor(pm25 * 10) / 10` truncation to handle breakpoint gap at 9.0-9.1
+LLM не придумывает числа для графиков.
 
-### Prediction Blending
-Final prediction = 70% ML model output + 30% statistical baseline (monthly averages from 2234-day dataset)
+LLM делает только:
+- человекочитаемый ответ;
+- объяснение прогноза;
+- рекомендации пользователю.
 
----
+Численные поля `aqi_prediction` и `traffic_index_prediction` считает ML service.
 
-## Design System
+## 6.3 Аналитика
 
-- **Theme:** Dark Cyberpunk
-- **Primary Colors:** Cyan (`#00FFFF`), Purple (`#8B5CF6`)
-- **Map:** Yandex Maps with real-time traffic overlay
-- **Font:** Inter (system fallback)
+### Что показывает
 
----
+Новая аналитика строится из двух источников:
 
-## Environment Variables
+- `historical CSV`
+- `7-day forecast`
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `POSTGRES_USER` | Yes | PostgreSQL username (default: `smartcity`) |
-| `POSTGRES_PASSWORD` | Yes | PostgreSQL password |
-| `POSTGRES_DB` | Yes | Database name (default: `smartcity_db`) |
-| `TOMTOM_API_KEY` | No | TomTom Traffic API key |
-| `YANDEX_MAPS_API_KEY` | No | Yandex Maps JS API key |
-| `GROQ_API_KEY` | No | Groq AI API key |
-| `GO_ENV` | No | `development` or `production` |
+Во вкладке теперь есть:
+- 7-дневный прогноз AQI и traffic;
+- monthly overview risk events;
+- сезонная связь температуры и AQI.
 
-> **Note:** Weather and AQI data come from **Open-Meteo** (free, no API key needed). All services return mock data when API keys are missing.
+### Как идет поток данных
 
----
+```mermaid
+sequenceDiagram
+    participant FE as Frontend
+    participant GO as Go Backend
+    participant ML as Python ML
+    participant CSV as Historical CSV
+    participant OM as Open-Meteo Forecast
 
-## Testing
-
-| Service | Framework | Tests | Command |
-|---------|-----------|-------|---------|
-| Go Backend | `go test` | 32 | `cd backend-go && go test ./... -v` |
-| Python ML | pytest | 36 | `cd ml-python && python -m pytest tests/ -v` |
-| Frontend | Vitest + Testing Library | 7 | `cd frontend-react && npx vitest run` |
-| **All** | -- | **75** | `make test` |
-
-### What is tested:
-- **Go:** EPA AQI calculation (`pm25ToAQI`), boundary values, monotonicity, all ranges
-- **Python:** AQI unit tests (7 EPA categories), `/health` endpoint, `/predict` validation, edge cases
-- **Frontend:** Header rendering, tab navigation, language switcher, footer
-
----
-
-## CI/CD
-
-GitHub Actions pipeline (`.github/workflows/ci.yml`) runs on push/PR to `main`:
-
-| Job | Steps |
-|-----|-------|
-| **Go Tests** | Setup Go 1.22, `go test ./...` |
-| **Python Tests** | Setup Python 3.12, install deps, `pytest` |
-| **Frontend** | Setup Node 20, `npm ci`, ESLint, TypeScript check, Vitest |
-| **Docker Build** | Build all 4 container images |
-
----
-
-## Data Correlations (Almaty Context)
-
-The ML service applies these Almaty-specific rules:
-
-| Season | Condition | Effect |
-|--------|-----------|--------|
-| Winter (Dec-Feb) | Temperature < -10C | High Smog (AQI > 150) |
-| Summer (Jun-Aug) | Temperature > 30C | Lower Traffic |
-| All Year | Inversion Layer | AQI Spike |
-| Rush Hours | 07:00-09:00, 17:00-19:00 | Traffic Index > 70 |
-
-Historical dataset: 2234 days of real Almaty data (Open-Meteo Archive, 2020-2026).
-
----
-
-## Development
-
-### Run Backend Locally
-```bash
-cd backend-go
-go mod download
-go run cmd/server/main.go
+    FE->>GO: GET /api/v1/analytics
+    GO->>GO: add current live context
+    GO->>ML: POST /analytics
+    ML->>CSV: load historical dataset
+    ML->>ML: build monthly overview and correlations
+    ML->>OM: get 7-day forecast
+    ML->>ML: build forecast_days
+    ML-->>GO: analytics payload
+    GO-->>FE: analytics JSON
 ```
 
-### Run ML Service Locally
-```bash
-cd ml-python
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-uvicorn main:app --reload --port 8000
-```
+### Почему это правильнее для диплома
 
-### Run Frontend Locally
-```bash
-cd frontend-react
-npm install
-npm run dev
-```
+Потому что:
+- аналитика больше не "начинается с нуля" после запуска;
+- исторические графики стабильны;
+- прогноз на будущее строится отдельно;
+- разделы проекта больше не смешивают live-данные и history.
 
----
+## 7. Какие данные хранятся где
 
-## License
+## 7.1 PostgreSQL
 
-MIT License -- Diploma Project 2026
+Используется для:
+- live snapshots;
+- prediction logs;
+- текущих history endpoints backend;
+- служебных данных приложения.
+
+Таблицы:
+- `weather_data`
+- `traffic_data`
+- `heatmap_snapshots`
+- `prediction_logs`
+
+## 7.2 CSV datasets
+
+Основной runtime dataset:
+- `ml-python/data/almaty_history.csv`
+
+Архивные файлы:
+- `almaty_history_backup.csv`
+- `almaty_history_pre_epa2024.csv`
+
+Практический смысл:
+- runtime-логика должна опираться на `almaty_history.csv`;
+- остальные файлы нужны как backup/provenance, а не как главный источник аналитики.
+
+## 7.3 Forecast cache
+
+ML service кэширует forecast в памяти примерно на 1 час, чтобы:
+- не дергать Open-Meteo слишком часто;
+- быстрее отвечать на повторные запросы.
+
+## 8. Почему аналитика больше не обнуляется
+
+Старая проблема была такой:
+- приложение локально запускалось;
+- backend писал weather/traffic в БД только во время работы;
+- графики зависели от того, сколько времени система прожила после старта.
+
+Новая схема:
+- live snapshots по-прежнему пишутся в БД;
+- но аналитика на вкладке строится не из этих snapshots;
+- аналитика строится из historical CSV и forecast.
+
+Именно поэтому после перезапуска:
+- live widgets обновляются заново;
+- а аналитика остается осмысленной.
+
+## 9. Почему это не overengineering
+
+Система специально разделена просто:
+
+- `Мониторинг` = live
+- `Планировщик` = future forecast
+- `Аналитика` = history + short-term outlook
+
+Мы не добавляли тяжелый scheduler и не строили продовый data warehouse.
+
+Для диплома это хороший компромисс:
+- архитектура понятная;
+- логика честная;
+- данные не захардкожены вручную в графиках;
+- модель использует реальный historical dataset и forecast API.
+
+## 10. Когда включается demo/mock режим
+
+### Трафик
+
+Трафик может уйти в mock/simulation, если:
+- нет `TOMTOM_API_KEY`;
+- TomTom API недоступен;
+- backend не смог получить live traffic.
+
+### Planner
+
+`is_mock=true` в прогнозе обычно означает, что:
+- недоступен ML service;
+- нет нормального historical data;
+- backend вернул fallback.
+
+### Analytics
+
+Аналитика работает даже без TomTom и Groq, если:
+- ML service поднят;
+- `almaty_history.csv` доступен.
+
+## 11. Основные endpoints и их роль
+
+### Backend
+
+| Endpoint | Роль |
+|---|---|
+| `/api/v1/dashboard` | live monitor |
+| `/api/v1/weather` | current weather + AQI |
+| `/api/v1/traffic` | current traffic |
+| `/api/v1/predict` | planner |
+| `/api/v1/analytics` | analytics |
+| `/api/v1/stats` | technical stats |
+
+### ML service
+
+| Endpoint | Роль |
+|---|---|
+| `/predict` | numeric forecast + optional LLM text |
+| `/analytics` | historical analytics + 7-day forecast |
+| `/stats` | monthly stats, correlations, model info |
+| `/model/info` | diagnostics |
+| `/model/retrain` | retraining |
+
+Важно:
+- backend endpoint `/api/v1/analytics` — это `GET`, потому что фронту так удобно;
+- внутри backend делает enrichment и вызывает ML endpoint `/analytics` через `POST`.
+
+## 12. Где искать логику в коде
+
+| Задача | Основные файлы |
+|---|---|
+| Backend routes | `backend-go/internal/delivery/http/router.go` |
+| Backend handlers | `backend-go/internal/delivery/http/handlers.go` |
+| ML bridge | `backend-go/internal/service/ml_bridge.go` |
+| Prediction logic | `ml-python/services/logic.py` |
+| Forecast logic | `ml-python/services/forecast.py` |
+| Historical dataset | `ml-python/data/almaty_history.csv` |
+| Analytics UI | `frontend-react/src/components/analytics/` |
+| Planner UI | `frontend-react/src/components/dashboard/TripPlanner.tsx` |
+| API client | `frontend-react/src/services/api.ts` |
+
+## 13. Важные технические договоренности
+
+- Временная зона для логики forecast и future dates: `Asia/Almaty`.
+- Фронтенд работает через same-origin API.
+- Яндекс Карты загружаются на стороне браузера.
+- Численные графики не должны зависеть от LLM.
+- Историческая аналитика должна строиться из CSV, а не из session data.
+
+## 14. Как объяснить архитектуру за 30 секунд
+
+Можно сказать так:
+
+> У нас есть frontend, Go backend и Python ML service.  
+> Мониторинг показывает live-состояние города через внешние API.  
+> Планировщик прогнозирует события на выбранную дату через historical CSV и weather forecast.  
+> Аналитика показывает исторические закономерности по Алматы и ближайший 7-дневный прогноз.  
+> Поэтому проект работает локально стабильно и не требует реального продового накопления данных.

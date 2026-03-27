@@ -1,421 +1,263 @@
-# Smart City AI Core | Almaty Urban Monitoring System
+# Smart City AI Core
 
-**Умная городская система мониторинга с AI-прогнозами для города Алматы**
+Дипломный проект по прогнозированию городских событий для Алматы.
 
-Дипломный проект, демонстрирующий интеграцию микросервисной архитектуры, машинного обучения и современных веб-технологий для создания системы мониторинга городской среды.
+Проект состоит из 3 смысловых частей:
+- `Мониторинг` показывает, что происходит в городе сейчас.
+- `Планировщик` отвечает на вопрос пользователя про выбранную дату.
+- `Аналитика` показывает исторические закономерности и ближайший 7-дневный прогноз.
 
-![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Go](https://img.shields.io/badge/Go-1.22-00ADD8?logo=go)
-![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python)
-![React](https://img.shields.io/badge/React-18-61DAFB?logo=react)
-![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker)
-![CI](https://img.shields.io/badge/CI-GitHub_Actions-2088FF?logo=githubactions)
+## Что изменено в текущей версии
 
----
+- Аналитика больше не зависит от локального накопления данных после запуска приложения.
+- Источник аналитики: `ml-python/data/almaty_history.csv`.
+- Прогноз на будущую дату теперь использует погоду выбранного дня, а не текущую температуру.
+- LLM больше не используется для чисел на графиках.
+- LLM нужен только для текстового объяснения в Планировщике.
 
-## Содержание
+Это важно для локального запуска: после перезапуска проекта графики аналитики не обнуляются, потому что строятся по историческому CSV.
 
-- [Возможности](#возможности)
-- [Архитектура](#архитектура)
-- [Быстрый старт](#быстрый-старт)
-- [Технологии](#технологии)
-- [API Документация](#api-документация)
-- [Тестирование](#тестирование)
-- [CI/CD](#cicd)
-- [Разработка](#разработка)
-- [Скриншоты](#скриншоты)
+## Что умеет система
 
----
+### 1. Мониторинг
 
-## Возможности
+- Погода, влажность, ветер, видимость и AQI.
+- Трафик, загруженность дорог и инциденты.
+- Карта Алматы с Яндекс Картами.
 
-### Мониторинг в реальном времени
-- **Погода** -- температура, ощущается как, влажность, ветер, видимость (Open-Meteo API)
-- **Трафик** -- индекс загруженности дорог, средняя скорость, 24 дорожных сегмента, инциденты (TomTom API + Яндекс Карты)
-- **Качество воздуха (AQI)** -- расчет EPA 2024 AQI по PM2.5 с цветовой индикацией и рекомендациями
+Источники:
+- Погода и качество воздуха: Open-Meteo / Open-Meteo Air Quality.
+- Трафик: TomTom.
+- Карта и визуальный слой пробок: Yandex Maps JS API.
 
-### AI Планировщик поездок
-- **Прогнозы на основе Groq LLM** (llama-3.1-8b-instant) -- умные рекомендации для поездок
-- **ML-модели** -- GradientBoosting для PM2.5, RandomForest для трафика (70% ML + 30% statistical baseline)
-- **Интерактивный чат** -- задавайте вопросы на естественном языке
+### 2. Планировщик
 
-### Аналитика
-- **Качество воздуха за 7 дней** -- Area-график с порогом опасности
-- **Пробки по часам суток** -- Bar-график загруженности с цветовой индикацией
-- **Сезонный смог: Алматы** -- комбинированный график на основе 2234 дней исторических данных
+Пользователь задает вопрос, например:
+- когда лучше выехать;
+- нужна ли маска;
+- как будут выглядеть пробки в выбранный день.
 
-### Визуализация данных
-- **Яндекс Карты** -- интерактивная карта с real-time трафиком Яндекса, наложением TomTom инцидентов и извлечением Яндекс-балла пробок (1-10)
-- **Real-time виджеты** -- адаптивный дашборд с киберпанк-дизайном
-- **Мультиязычность (RU / EN / KK)** -- полная локализация интерфейса
+Что происходит внутри:
+- фронтенд отправляет дату и вопрос;
+- Go backend добавляет текущий контекст города;
+- Python ML service берет исторический CSV и forecast выбранного дня;
+- модель считает AQI и traffic index;
+- Groq, если включен, формирует человекочитаемый ответ.
 
-### Режим работы
-- **Mock-данные** -- система работает без API-ключей в демо-режиме (graceful degradation)
-- **Реальные данные** -- Open-Meteo (погода, бесплатно), TomTom (трафик), Яндекс Карты (пробки), Groq (LLM)
-- **Кэширование** -- погода 5 мин, трафик 15 мин, React Query 30 сек
-- **Историческая аналитика** -- 2234 дня реальных данных Алматы (Open-Meteo Archive 2020-2026)
-- **Безопасность** -- CORS ограничен, rate limiter (60 req/min), gzip-сжатие, security-заголовки Nginx
+Если Groq отключен, проект все равно выдает численный прогноз и короткий текстовый fallback.
 
----
+### 3. Аналитика
 
-## Архитектура
+Аналитика теперь разделена на 2 типа данных:
 
-```
-+------------------+       +------------------+       +------------------+
-|   Frontend       |------>|   Backend Go     |------>|  ML Service      |
-|  React + Vite    |       |   Fiber API      |       | Python + FastAPI |
-|  Яндекс Карты    |       |   Clean Arch     |       | scikit-learn     |
-|  Recharts        |       |   PostgreSQL     |       | Groq LLM         |
-+------------------+       +------------------+       +------------------+
-         |                          |                          |
-         |                          v                          |
-         |                 +---------------+                   |
-         |                 |  PostgreSQL    |                   |
-         |                 |   + PostGIS    |                   |
-         |                 +---------------+                   |
-         |                          |                          |
-         |         +----------------+----------------+         |
-         |         v                v                v         |
-     +--------+ +--------+ +---------------+ +-----------+    |
-     |Open-   | |TomTom  | |Яндекс Карты   | |  Groq AI  |<--+
-     |Meteo   | |Traffic | |(JS API 2.1)   | |  (LLM)    |
-     +--------+ +--------+ +---------------+ +-----------+
+- `Historical analytics` из `almaty_history.csv`
+- `Forecast analytics` на ближайшие 7 дней
+
+В результате вкладка показывает:
+- 7-дневный прогноз AQI, трафика и интегрального risk score;
+- месячную частоту риск-событий по историческому датасету;
+- сезонную связь температуры и AQI.
+
+## Архитектура в одном взгляде
+
+```mermaid
+graph LR
+    A[Frontend React] --> B[Go Backend]
+    B --> C[PostgreSQL]
+    B --> D[Python ML Service]
+    B --> E[Open-Meteo]
+    B --> F[TomTom]
+    A --> G[Yandex Maps JS API]
+    D --> H[almaty_history.csv]
+    D --> E
+    D --> I[Groq]
 ```
 
-### Сервисы
+Коротко:
+- `Frontend` показывает интерфейс.
+- `Go Backend` собирает live-данные и проксирует AI-запросы.
+- `Python ML Service` считает прогнозы и аналитику.
+- `PostgreSQL` хранит live snapshots и логи прогнозов.
+- `CSV` хранит историческую базу для аналитики и ML.
 
-| Сервис | Порт | Технология | Назначение |
-|--------|------|------------|------------|
-| **Frontend** | 3000 | React 18 + TypeScript + Nginx | UI дашборд, карты, аналитика |
-| **Backend** | 8080 | Go 1.22 (Fiber) + pgx | API Gateway, бизнес-логика, кэширование |
-| **ML Service** | 8000 | Python 3.12 + FastAPI + scikit-learn | AI-прогнозы, ML-модели, статистика |
-| **Database** | 5432 | PostgreSQL 15 + PostGIS | Хранение погоды, трафика, прогнозов |
+## Какие данные откуда берутся
 
-### Внешние API
-
-| Провайдер | Данные | Стоимость | Кэш |
-|-----------|--------|-----------|------|
-| **Open-Meteo** | Погода + AQI (PM2.5 -> EPA AQI) | Бесплатно, без ключа | 5 мин |
-| **TomTom** | Traffic Flow + Incidents v5 | Free-tier (2500/day) | 15 мин |
-| **Яндекс Карты** | Real-time пробки (JS API 2.1) | Бесплатно для разработки | ~60 сек |
-| **Groq** | LLM (llama-3.1-8b-instant) | Free-tier | Нет |
-
----
+| Что показываем | Источник |
+|---|---|
+| Текущая погода | Open-Meteo |
+| Текущий AQI | Open-Meteo Air Quality + расчет AQI |
+| Текущий трафик | TomTom |
+| Карта | Yandex Maps JS API |
+| Историческая аналитика | `ml-python/data/almaty_history.csv` |
+| Будущий прогноз | ML + historical CSV + Open-Meteo forecast |
+| Текстовый AI-ответ | Groq, если ключ задан |
 
 ## Быстрый старт
 
-### Требования
-- Docker 20.10+
-- Docker Compose v2+
-- make (опционально)
+### 1. Подготовьте `.env`
 
-### 1. Клонируйте репозиторий
-```bash
-git clone https://github.com/Beksanoff/smart-city-ai
-cd smart-city-ai
-```
-
-### 2. Настройте переменные окружения
 ```bash
 cp .env.example .env
-# Отредактируйте .env если нужны реальные API-ключи
 ```
 
-### 3. Запустите проект
-```bash
-# С Make (рекомендуется)
-make up
+Минимально нужны настройки БД.
 
-# Или вручную
+Для полного режима желательно заполнить:
+- `TOMTOM_API_KEY`
+- `GROQ_API_KEY`
+- `YANDEX_MAPS_API_KEY`
+
+Важно:
+- `Open-Meteo` не требует ключа.
+- `OPENWEATHER_API_KEY` в текущей архитектуре не нужен для основной логики и может оставаться пустым.
+
+### 2. Запустите проект
+
+```bash
 docker compose up -d --build
 ```
 
+Если вы меняли `POSTGRES_*` и до этого уже запускали проект, лучше сделать чистый перезапуск:
+
+```bash
+docker compose down -v
+docker compose up -d --build
+```
+
+### 3. Проверьте контейнеры
+
+```bash
+docker compose ps
+```
+
+Ожидаемые сервисы:
+- `smartcity-db`
+- `smartcity-ml`
+- `smartcity-backend`
+- `smartcity-frontend`
+
 ### 4. Откройте приложение
-```
-Frontend:    http://localhost:3000
-Backend API: http://localhost:8080
-ML Service:  http://localhost:8000
-```
 
-### Управление проектом
-```bash
-make up       # Запустить все сервисы
-make down     # Остановить все сервисы
-make restart  # Перезапустить
-make logs     # Просмотр логов
-make status   # Статус контейнеров
-make clean    # Полная очистка (удалить volumes)
-make test     # Запуск всех тестов
-make lint     # Проверка кода (ESLint + TypeScript + go vet)
-```
+- Frontend: `http://localhost:3000`
+- Backend API: `http://localhost:8080`
+- ML service: `http://localhost:8000`
 
----
+## Режимы работы
 
-## Технологии
+### Полный режим
 
-### Backend (Go 1.22)
-- **Fiber** -- высокопроизводительный веб-фреймворк
-- **pgx** -- PostgreSQL драйвер
-- **Clean Architecture** -- domain -> service -> repository -> delivery
-- **Rate Limiter** -- 60 запросов/мин через sliding window
-- **Gzip Compression** -- сжатие ответов
-- **Concurrent Fetching** -- горутины для параллельного запроса погоды + трафика
-- **Graceful Degradation** -- mock-данные при отсутствии API-ключей
+Если есть все ключи и внешний интернет:
+- мониторинг работает на live-данных;
+- Planner выдает нормальный AI-ответ;
+- Analytics работает на CSV + forecast.
 
-### ML Service (Python 3.12)
-- **FastAPI** -- асинхронный API
-- **scikit-learn** -- GradientBoosting (PM2.5, R²=0.53), RandomForest (трафик, R²=0.77)
-- **Groq AI SDK** -- интеграция с LLM (llama-3.1-8b-instant)
-- **Pandas + NumPy** -- статистика, корреляции
-- **EPA 2024 AQI** -- расчет по PM2.5 с truncation fix для gap в breakpoints
-- **Separate Scalers** -- отдельные StandardScaler для PM2.5 и трафика
-- **Blended Predictions** -- 70% ML + 30% statistical baseline
+### Частичный режим
 
-### Frontend (React 18)
-- **Vite** -- сборщик
-- **TypeScript** -- типизация (0 ошибок)
-- **TailwindCSS** -- стилизация (киберпанк-тема)
-- **TanStack React Query** -- управление серверным состоянием
-- **Яндекс Карты JS API 2.1** -- интерактивная карта с real-time трафиком
-- **Recharts** -- графики аналитики (Area, Bar, Composed)
-- **i18next** -- мультиязычность (RU / EN / KK)
-- **Vitest + Testing Library** -- тестирование компонентов
+Если нет части ключей:
+- без `TOMTOM_API_KEY` трафик уходит в simulation/mock;
+- без `GROQ_API_KEY` текст AI-ответа становится упрощенным;
+- без `YANDEX_MAPS_API_KEY` карта может не загрузиться.
 
-### Infrastructure
-- **Docker + Docker Compose** -- контейнеризация (4 сервиса, `restart: unless-stopped`)
-- **Nginx** -- reverse proxy, security-заголовки, X-Real-IP
-- **PostgreSQL 15 + PostGIS** -- база данных с геопространственными возможностями
-- **GitHub Actions** -- CI pipeline (4 jobs)
+### Что не ломается даже без ключей
 
----
+- историческая аналитика из CSV;
+- сезонные графики;
+- базовый численный прогноз, если работает ML service.
 
-## API Документация
+## Основные API endpoints
 
-### Backend Endpoints (`:8080`)
+### Backend `:8080`
 
-| Метод | Endpoint | Описание |
-|-------|----------|----------|
+| Метод | Endpoint | Назначение |
+|---|---|---|
 | `GET` | `/health` | Health check |
-| `GET` | `/api/v1/dashboard` | Агрегированные данные (погода + трафик) |
-| `GET` | `/api/v1/weather` | Текущая погода + AQI |
-| `GET` | `/api/v1/traffic` | Трафик: 24 сегмента, инциденты, congestion index |
-| `GET` | `/api/v1/history/weather?hours=N` | История погоды за N часов (max 720) |
-| `GET` | `/api/v1/history/traffic?hours=N` | История трафика за N часов |
-| `POST` | `/api/v1/predict` | AI-прогноз (проксируется в ML Service) |
-| `GET` | `/api/v1/stats` | Статистика (проксируется в ML Service) |
+| `GET` | `/api/v1/dashboard` | Live weather + live traffic |
+| `GET` | `/api/v1/weather` | Текущая погода и AQI |
+| `GET` | `/api/v1/traffic` | Текущий трафик |
+| `POST` | `/api/v1/predict` | Планировщик / прогноз для выбранной даты |
+| `GET` | `/api/v1/analytics` | Историческая аналитика + 7-дневный прогноз |
+| `GET` | `/api/v1/stats` | Статистика модели и датасета |
 
-### ML Service Endpoints (`:8000`)
+### ML service `:8000`
 
-| Метод | Endpoint | Описание |
-|-------|----------|----------|
+| Метод | Endpoint | Назначение |
+|---|---|---|
 | `GET` | `/health` | Health check |
-| `POST` | `/predict` | AI-прогноз (Groq LLM + ML-модели + статистика) |
-| `GET` | `/stats` | Месячные средние, корреляции, данные по 2234 дням |
-| `GET` | `/model/info` | Информация о ML-моделях (метрики, дата обучения) |
-| `POST` | `/model/retrain` | Переобучение ML-моделей |
+| `POST` | `/predict` | Численный прогноз + LLM-текст |
+| `POST` | `/analytics` | Историческая аналитика + 7-day forecast payload |
+| `GET` | `/stats` | Monthly stats, correlations, model info |
+| `GET` | `/model/info` | Информация о модели |
+| `POST` | `/model/retrain` | Переобучение модели |
 
-### Пример запроса: AI-прогноз
-```http
-POST /api/v1/predict
-Content-Type: application/json
+## Как устроены вкладки
 
-{
-  "date": "2026-02-23",
-  "temperature": -5,
-  "query": "Когда лучше ехать завтра?"
-}
+| Вкладка | Отвечает на вопрос | На чем работает |
+|---|---|---|
+| `Мониторинг` | Что происходит сейчас? | Live APIs |
+| `Планировщик` | Что будет в выбранную дату? | ML + forecast + optional LLM |
+| `Аналитика` | Какие есть исторические паттерны и что будет в ближайшие 7 дней? | Historical CSV + forecast |
+
+## Что хранится в PostgreSQL
+
+База хранит:
+- `weather_data` — live snapshots погоды;
+- `traffic_data` — live snapshots трафика;
+- `heatmap_snapshots` — heatmap points;
+- `prediction_logs` — история запросов к Планировщику.
+
+Важно:
+- текущая аналитика не строится из этих таблиц;
+- исторические графики берутся из CSV;
+- поэтому аналитика не зависит от того, сколько времени приложение было открыто локально.
+
+## Структура проекта
+
+```text
+smart-city-ai/
+|-- backend-go/
+|   |-- cmd/server/
+|   |-- internal/
+|   |   |-- delivery/http/
+|   |   |-- domain/
+|   |   |-- repository/
+|   |   `-- service/
+|-- frontend-react/
+|   |-- src/components/
+|   |   |-- analytics/
+|   |   |-- dashboard/
+|   |   `-- map/
+|   |-- src/locales/
+|   `-- src/services/
+|-- ml-python/
+|   |-- data/
+|   |-- services/
+|   |-- tests/
+|   `-- tools/
+|-- migrations/
+|-- docker-compose.yml
+|-- README.md
+`-- PROJECT_ARCHITECTURAL_DOCUMENTATION.md
 ```
 
-### Пример ответа
-```json
-{
-  "success": true,
-  "data": {
-    "prediction": "Рекомендуется выезжать до 07:30 или после 20:00...",
-    "confidence_score": 0.91,
-    "aqi_prediction": 62,
-    "traffic_index_prediction": 30.8,
-    "reasoning": "На основе анализа 2234 исторических записей...",
-    "is_mock": false
-  }
-}
-```
+## Честные ограничения проекта
 
----
+- Исторический `traffic_index` в CSV является моделируемым индексом, а не прямым выгрузочным архивом городских датчиков.
+- Если нужен настоящий live-архив на месяцы вперед, нужен отдельный scheduler/collector.
+- В текущей дипломной версии это сознательно упрощено: live monitor работает онлайн, а аналитика опирается на подготовленный historical dataset.
 
-## Тестирование
+## Полезные команды
 
-### Go Backend -- 32 теста
 ```bash
-cd backend-go && go test ./... -v
-```
-- Table-driven тесты для `pm25ToAQI()`: граничные значения, монотонность, все диапазоны EPA
-- Покрытие: расчет AQI от 0 до 500+
-
-### Python ML Service -- 36 тестов
-```bash
-cd ml-python && python -m pytest tests/ -v
-```
-- Unit-тесты для EPA AQI расчета (все 7 категорий)
-- Тесты API: `/health`, `/predict` валидация входных данных
-- Тесты edge cases: нулевые значения, пустые строки, экстремальные PM2.5
-
-### Frontend React -- 7 тестов
-```bash
-cd frontend-react && npx vitest run
-```
-- Рендеринг заголовка и навигации
-- Переключение вкладок (Мониторинг, Аналитика, Планировщик)
-- Переключатель языка (RU/EN/KK)
-- Наличие footer
-
-### Запуск всех тестов
-```bash
-make test
+docker compose up -d --build
+docker compose down
+docker compose down -v
+docker compose logs -f backend-go
+docker compose logs -f ml-python
+docker compose ps
 ```
 
----
+## Для быстрого объяснения на защите
 
-## CI/CD
+Проект можно описать одной фразой:
 
-Проект использует **GitHub Actions** с 4 параллельными jobs:
-
-| Job | Что проверяет |
-|-----|---------------|
-| **Go Tests** | `go test ./...` на Go 1.22 |
-| **Python Tests** | `pytest` на Python 3.12 |
-| **Frontend** | ESLint + TypeScript `--noEmit` + Vitest |
-| **Docker Build** | Сборка всех 4 контейнеров |
-
-Файл конфигурации: `.github/workflows/ci.yml`
-
-CI запускается при push и pull request в `main`.
-
----
-
-## Разработка
-
-### Локальный запуск без Docker
-
-#### Backend (Go)
-```bash
-cd backend-go
-go mod download
-go run cmd/server/main.go
-```
-
-#### ML Service (Python)
-```bash
-cd ml-python
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-uvicorn main:app --reload --port 8000
-```
-
-#### Frontend (React)
-```bash
-cd frontend-react
-npm install
-npm run dev
-```
-
-### Структура проекта
-```
-antigravity_smartcity/
-├── .github/workflows/       # CI/CD (GitHub Actions)
-│   └── ci.yml
-├── backend-go/              # Go API Gateway
-│   ├── cmd/server/          # Точка входа (main.go)
-│   ├── internal/
-│   │   ├── domain/          # Доменные сущности и интерфейсы
-│   │   ├── repository/      # PostgreSQL + Mock реализации
-│   │   ├── service/         # Бизнес-логика + тесты
-│   │   └── delivery/http/   # HTTP handlers + router
-│   └── pkg/utils/           # Утилиты (haversine, clamp, lerp)
-├── ml-python/               # ML Микросервис
-│   ├── main.py              # FastAPI приложение
-│   ├── services/
-│   │   ├── logic.py         # Прогнозирование, Groq LLM
-│   │   ├── ml_model.py      # scikit-learn модели, EPA AQI
-│   │   └── forecast.py      # Получение прогнозов из Open-Meteo
-│   ├── tests/               # Pytest тесты (36 шт.)
-│   ├── models/              # Обученные модели (.pkl, в .gitignore)
-│   ├── data/                # almaty_history.csv (2234 дня)
-│   └── tools/               # Скрипты генерации данных
-├── frontend-react/          # React UI
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── dashboard/   # WeatherWidget, TrafficWidget, AQI, TripPlanner
-│   │   │   ├── analytics/   # AQIHistoryChart, TrafficByHourChart, CorrelationChart
-│   │   │   └── map/         # AlmatyMap (Яндекс Карты)
-│   │   ├── __tests__/       # Vitest тесты (7 шт.)
-│   │   ├── locales/         # ru.ts, en.ts, kk.ts
-│   │   ├── services/api.ts  # API клиент + fallback mock
-│   │   └── i18n.ts          # Настройка i18next
-│   └── nginx.conf           # Nginx конфигурация
-├── migrations/              # 001_init.sql (PostGIS + таблицы)
-├── docker-compose.yml       # 4 сервиса
-├── Makefile                 # Команды управления (test, lint, up, down...)
-├── .env.example             # Шаблон переменных окружения
-└── README.md
-```
-
----
-
-## Скриншоты
-
-### Дашборд мониторинга
-![Дашборд мониторинга](images/1.png)
-
-### Карта трафика Алматы
-![Карта трафика Алматы](images/2.png)
-
-### AI Планировщик
-![AI Планировщик](images/3.png)
-
----
-
-## API-ключи (опционально)
-
-Проект работает **без API-ключей** в демо-режиме с mock-данными. Для реальных данных:
-
-| Сервис | Регистрация | Переменная в `.env` | Примечание |
-|--------|-------------|---------------------|------------|
-| **TomTom** | https://developer.tomtom.com | `TOMTOM_API_KEY` | Трафик + инциденты (free-tier 2500 req/day) |
-| **Яндекс Карты** | https://developer.tech.yandex.ru | `YANDEX_MAPS_API_KEY` | Real-time пробки на карте |
-| **Groq AI** | https://console.groq.com | `GROQ_API_KEY` | LLM-прогнозы |
-
-> **Примечание:** Погода и AQI получаются через **Open-Meteo** (бесплатно, без ключа).
-
----
-
-## Лицензия
-
-MIT License - смотрите файл [LICENSE](LICENSE)
-
----
-
-## Авторы
-- @beksanov
-- @marlen_berdan
-- @xtasidi
-- @kurbanovbakhtiyar
-- @ske11e
-
-**Дипломный проект 2026**
-- Университет: META University
-- Город: Алматы, Казахстан
-
----
-
-## Благодарности
-
-- [Open-Meteo](https://open-meteo.com) -- бесплатный API погоды и качества воздуха
-- [TomTom](https://developer.tomtom.com) -- API трафика и инцидентов
-- [Яндекс Карты](https://yandex.ru/maps) -- карты и real-time пробки
-- [Groq](https://groq.com) -- AI-инфраструктура (LLM)
-
----
-
-**Сделано для улучшения городской среды Алматы**
+> Это система, где мониторинг показывает текущее состояние города, аналитика показывает исторические закономерности по Алматы, а планировщик прогнозирует будущие городские события по выбранной дате с помощью ML и AI.
