@@ -6,78 +6,62 @@ import {
     CartesianGrid,
     Tooltip,
     ResponsiveContainer,
-    Cell,
-    ReferenceLine
 } from 'recharts'
 import { useMemo } from 'react'
-import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { api } from '../../services/api'
 import { Car } from 'lucide-react'
+import type { AnalyticsMonthlyOverview } from '../../services/api'
 
-export default function TrafficByHourChart() {
+interface TrafficByHourChartProps {
+    monthlyOverview: AnalyticsMonthlyOverview[]
+    isLoading: boolean
+}
+
+const MONTH_KEYS = [
+    'chart.monthJan',
+    'chart.monthFeb',
+    'chart.monthMar',
+    'chart.monthApr',
+    'chart.monthMay',
+    'chart.monthJun',
+    'chart.monthJul',
+    'chart.monthAug',
+    'chart.monthSep',
+    'chart.monthOct',
+    'chart.monthNov',
+    'chart.monthDec',
+] as const
+
+export default function TrafficByHourChart({ monthlyOverview, isLoading }: TrafficByHourChartProps) {
     const { t } = useTranslation()
-    const { data: trafficHistory, isLoading } = useQuery({
-        queryKey: ['trafficHistory', 24],
-        queryFn: () => api.getTrafficHistory(24),
-        refetchInterval: 5 * 60_000,
-    })
 
-    const { data, hasFallback } = useMemo(() => {
-        if (trafficHistory && trafficHistory.length > 0) {
-            const byHour: Record<number, { total: number; count: number }> = {}
-            for (let h = 0; h < 24; h++) {
-                byHour[h] = { total: 0, count: 0 }
-            }
-            trafficHistory.forEach((tr) => {
-                const hour = new Date(tr.timestamp).toLocaleString('en-US', {
-                    hour: 'numeric', hour12: false, timeZone: 'Asia/Almaty',
-                })
-                const h = parseInt(hour, 10)
-                byHour[h].total += tr.congestion_index
-                byHour[h].count += 1
-            })
-            return {
-                data: Array.from({ length: 24 }, (_, i) => ({
-                    hour: `${String(i).padStart(2, '0')}:00`,
-                    congestion: byHour[i].count > 0
-                        ? Math.round(byHour[i].total / byHour[i].count)
-                        : 0,
-                })),
-                hasFallback: false,
-            }
-        }
+    const data = useMemo(() => (
+        monthlyOverview.map((monthData) => ({
+            ...monthData,
+            monthLabel: t(MONTH_KEYS[monthData.month - 1]),
+        }))
+    ), [monthlyOverview, t])
 
-        const HOURLY_PATTERN = [
-            12, 8, 6, 5, 7, 15, 35, 72, 85, 68,
-            52, 55, 62, 58, 50, 55, 68, 82, 78, 55,
-            40, 30, 22, 15
-        ]
-        return {
-            data: HOURLY_PATTERN.map((base, i) => ({
-                hour: `${String(i).padStart(2, '0')}:00`,
-                congestion: base,
-            })),
-            hasFallback: true,
-        }
-    }, [trafficHistory])
+    const hasData = data.length > 0
 
-    const getBarColor = (value: number) => {
-        if (value > 70) return '#ef4444'
-        if (value > 50) return '#f97316'
-        if (value > 30) return '#f59e0b'
-        return '#10b981'
-    }
-
-    const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: Array<{ value?: number }>; label?: string }) => {
+    const CustomTooltip = ({
+        active,
+        payload,
+        label,
+    }: {
+        active?: boolean
+        payload?: Array<{ color?: string; name?: string | number; value?: number }>
+        label?: string
+    }) => {
         if (!active || !payload?.length) return null
-        const value = payload[0]?.value ?? 0
         return (
             <div className="bg-cyber-dark border border-cyber-border rounded-lg px-3 py-2 shadow-lg">
                 <p className="text-xs text-cyber-muted mb-1">{label}</p>
-                <p className="text-sm font-semibold" style={{ color: getBarColor(value) }}>
-                    {t('analytics.trafficPercent', { value })}
-                </p>
+                {payload.map((item, index) => (
+                    <p key={index} className="text-sm" style={{ color: item.color }}>
+                        {item.name}: <span className="font-semibold">{item.value}%</span>
+                    </p>
+                ))}
             </div>
         )
     }
@@ -98,25 +82,19 @@ export default function TrafficByHourChart() {
                 </div>
             </div>
 
-            {/* Color legend */}
             <div className="flex flex-wrap gap-x-4 gap-y-1 mb-3 text-[11px]">
                 <span className="flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-full bg-green-500 shrink-0" />
-                    {t('analytics.trafficLow')}
+                    <span className="w-3 h-3 rounded-sm shrink-0 bg-orange-500" />
+                    {t('analytics.riskAqiDays')}
                 </span>
                 <span className="flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-full bg-yellow-500 shrink-0" />
-                    {t('analytics.trafficMid')}
+                    <span className="w-3 h-3 rounded-sm shrink-0 bg-cyber-purple" />
+                    {t('analytics.riskTrafficDays')}
                 </span>
                 <span className="flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-full bg-red-500 shrink-0" />
-                    {t('analytics.trafficHigh')}
+                    <span className="w-3 h-3 rounded-sm shrink-0 bg-red-500" />
+                    {t('analytics.riskCombinedDays')}
                 </span>
-                {hasFallback && !isLoading && (
-                    <span className="text-yellow-500 ml-auto">
-                        ⚠ {t('analytics.trafficFallback')}
-                    </span>
-                )}
             </div>
 
             {isLoading && (
@@ -125,35 +103,42 @@ export default function TrafficByHourChart() {
                 </div>
             )}
 
-            <div className="h-[280px]">
-                <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={data} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#1f1f2e" />
-                        <XAxis
-                            dataKey="hour"
-                            stroke="#6b7280"
-                            tick={{ fontSize: 11 }}
-                            interval={2}
-                        />
-                        <YAxis
-                            stroke="#6b7280"
-                            tick={{ fontSize: 11 }}
-                            domain={[0, 100]}
-                            tickFormatter={(v) => `${v}%`}
-                        />
-                        <Tooltip content={<CustomTooltip />} cursor={{ fill: '#18181b' }} />
-                        <ReferenceLine y={70} stroke="#ef4444" strokeDasharray="4 4" strokeWidth={1} strokeOpacity={0.5} />
-                        <Bar dataKey="congestion" radius={[3, 3, 0, 0]} maxBarSize={20}>
-                            {data.map((entry, index) => (
-                                <Cell
-                                    key={`cell-${index}`}
-                                    fill={getBarColor(entry.congestion)}
-                                    fillOpacity={0.85}
-                                />
-                            ))}
-                        </Bar>
-                    </BarChart>
-                </ResponsiveContainer>
+            <div className="h-[300px]">
+                {hasData ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={data} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#1f1f2e" />
+                            <XAxis
+                                dataKey="monthLabel"
+                                stroke="#6b7280"
+                                tick={{ fontSize: 11 }}
+                                interval={0}
+                            />
+                            <YAxis
+                                stroke="#6b7280"
+                                tick={{ fontSize: 11 }}
+                                domain={[0, 100]}
+                                tickFormatter={(value) => `${value}%`}
+                            />
+                            <Tooltip content={<CustomTooltip />} />
+                            <Bar dataKey="high_aqi_pct" name={t('analytics.riskAqiDays')} fill="#f97316" radius={[3, 3, 0, 0]} />
+                            <Bar dataKey="high_traffic_pct" name={t('analytics.riskTrafficDays')} fill="#8b5cf6" radius={[3, 3, 0, 0]} />
+                            <Bar dataKey="combined_risk_pct" name={t('analytics.riskCombinedDays')} fill="#ef4444" radius={[3, 3, 0, 0]} />
+                        </BarChart>
+                    </ResponsiveContainer>
+                ) : !isLoading ? (
+                    <div className="flex flex-col items-center justify-center h-[300px] text-center px-4">
+                        <div className="w-16 h-16 rounded-full bg-yellow-500/10 flex items-center justify-center mb-4">
+                            <Car className="w-8 h-8 text-yellow-500/50" />
+                        </div>
+                        <p className="text-sm text-yellow-500 font-medium mb-1">
+                            {t('analytics.noDataTitle')}
+                        </p>
+                        <p className="text-xs text-cyber-muted max-w-[280px] leading-relaxed">
+                            {t('analytics.noDataHint')}
+                        </p>
+                    </div>
+                ) : null}
             </div>
         </div>
     )

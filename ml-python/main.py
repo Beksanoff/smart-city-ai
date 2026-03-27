@@ -178,6 +178,21 @@ async def get_stats():
         raise HTTPException(status_code=500, detail="Internal stats error")
 
 
+@app.post("/analytics")
+async def get_analytics(request: PredictionRequest):
+    """Get analytics payload built from historical CSV data and forecast-driven predictions."""
+    try:
+        data = await prediction_service.get_analytics_data(
+            live_aqi=request.live_aqi,
+            live_traffic=request.live_traffic,
+            live_temp=request.live_temp,
+        )
+        return {"success": True, "data": data}
+    except Exception as e:
+        logger.error(f"Analytics error: {e}")
+        raise HTTPException(status_code=500, detail="Internal analytics error")
+
+
 @app.get("/model/info")
 async def model_info():
     """Get ML model training metrics, feature importance, and status."""

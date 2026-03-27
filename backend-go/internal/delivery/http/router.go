@@ -29,5 +29,6 @@ func SetupRoutes(app *fiber.App, dashboardSvc *service.DashboardService, mlBridg
 
 		// ML stats endpoint
 		api.Get("/stats", handler.GetStats)
+		api.Get("/analytics", handler.GetAnalytics)
 	}
 }

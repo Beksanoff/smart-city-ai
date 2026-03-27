@@ -98,6 +98,38 @@ func (b *MLBridge) GetStats(ctx context.Context) (map[string]interface{}, error)
 	return result, nil
 }
 
+// GetAnalytics fetches analytics payload from the Python ML service.
+func (b *MLBridge) GetAnalytics(ctx context.Context, req domain.PredictionRequest) (map[string]interface{}, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("ml_bridge: failed to marshal analytics request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/analytics", b.serviceURL)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("ml_bridge: failed to create analytics request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := b.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("ml_bridge: analytics request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("ml_bridge: analytics returned status %d", resp.StatusCode)
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 2*1024*1024)).Decode(&result); err != nil {
+		return nil, fmt.Errorf("ml_bridge: failed to decode analytics: %w", err)
+	}
+
+	return result, nil
+}
+
 // Health checks ML service connectivity
 func (b *MLBridge) Health(ctx context.Context) error {
 	url := fmt.Sprintf("%s/health", b.serviceURL)

@@ -11,9 +11,10 @@ Enhanced with:
 import os
 import asyncio
 import logging
-from datetime import datetime
-from typing import Optional, Dict, Any
+from datetime import datetime, timedelta
+from typing import Optional, Dict, Any, List
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -21,6 +22,12 @@ from services.ml_model import SmartCityMLModel
 from services.forecast import ForecastService
 
 logger = logging.getLogger(__name__)
+LOCAL_TZ = ZoneInfo("Asia/Almaty")
+
+
+def local_now() -> datetime:
+    """Return current Almaty time as a naive datetime for local date math."""
+    return datetime.now(LOCAL_TZ).replace(tzinfo=None)
 
 # Try to import groq, handle if not available
 try:
@@ -188,6 +195,138 @@ class PredictionService:
             }
         return patterns
 
+    def _resolve_target_conditions(
+        self,
+        target_date: datetime,
+        requested_temperature: Optional[float],
+        live_temp: Optional[float],
+        forecast: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Resolve weather inputs for the target date without leaking current weather into the future."""
+        stats = self.monthly_stats.get(target_date.month, {})
+        date_str = target_date.strftime("%Y-%m-%d")
+        forecast_day = self.forecast_service.find_day_forecast(forecast, date_str)
+        today = local_now().date()
+
+        temperature = None
+        source = "historical_average"
+
+        if target_date.date() == today and live_temp is not None:
+            temperature = live_temp
+            source = "live"
+        elif forecast_day and forecast_day.get("temp_mean") is not None:
+            temperature = float(forecast_day["temp_mean"])
+            source = "forecast"
+        elif target_date.date() == today and requested_temperature is not None:
+            temperature = requested_temperature
+            source = "request"
+        else:
+            temperature = float(stats.get("temp_mean", 0.0))
+
+        humidity = float(
+            (forecast_day or {}).get("humidity")
+            if (forecast_day or {}).get("humidity") is not None
+            else stats.get("humidity_mean", 60.0)
+        )
+        wind_speed = float(
+            (forecast_day or {}).get("wind_max")
+            if (forecast_day or {}).get("wind_max") is not None
+            else stats.get("wind_mean", 8.0)
+        )
+        precipitation = float(
+            (forecast_day or {}).get("precipitation")
+            if (forecast_day or {}).get("precipitation") is not None
+            else stats.get("precip_mean", 0.0)
+        )
+
+        return {
+            "temperature": float(temperature),
+            "humidity": humidity,
+            "wind_speed": wind_speed,
+            "precipitation": precipitation,
+            "source": source,
+            "forecast_day": forecast_day,
+        }
+
+    def _get_recent_history_window(self, target_date: datetime) -> Optional[pd.DataFrame]:
+        """
+        Return a recent 7-day history window only when it is actually close to the target date.
+
+        This prevents using stale February rows as "yesterday" for a forecast in late March.
+        """
+        if self.df is None or self.df.empty or "date" not in self.df.columns:
+            return None
+
+        cutoff = pd.Timestamp(target_date.date())
+        lookback = self.df[self.df["date"] < cutoff].tail(7)
+        if lookback.empty:
+            return None
+
+        last_date = pd.Timestamp(lookback["date"].iloc[-1]).normalize()
+        gap_days = int((cutoff - last_date).days)
+        if gap_days < 1 or gap_days > 7:
+            return None
+
+        return lookback
+
+    def _predict_numeric(
+        self,
+        target_date: datetime,
+        conditions: Dict[str, Any],
+        live_aqi: Optional[int],
+        live_traffic: Optional[float],
+        live_temp: Optional[float],
+    ) -> Dict[str, Any]:
+        """Run numeric AQI and traffic prediction without involving the LLM."""
+        month = target_date.month
+        day_of_week = target_date.weekday()
+        is_weekend = day_of_week >= 5
+        stats = self.monthly_stats.get(month, {})
+        has_history_data = bool(stats) or (self.df is not None and not self.df.empty)
+
+        ml_result = self._ml_predict(
+            target_date=target_date,
+            temperature=conditions["temperature"],
+            humidity=conditions["humidity"],
+            wind_speed=conditions["wind_speed"],
+            precipitation=conditions["precipitation"],
+            live_aqi=live_aqi,
+            live_traffic=live_traffic,
+            live_temp=live_temp,
+        )
+
+        stat_aqi, stat_traffic, stat_confidence, base_insight = self._predict_from_data(
+            month=month,
+            temperature=conditions["temperature"],
+            is_weekend=is_weekend,
+        )
+
+        if ml_result and "error" not in ml_result:
+            aqi_prediction = int(round(0.70 * ml_result["aqi_prediction"] + 0.30 * stat_aqi))
+            traffic_prediction = round(0.70 * ml_result["traffic_prediction"] + 0.30 * stat_traffic, 1)
+            confidence = min(0.95, 0.70 * ml_result["confidence"] + 0.30 * stat_confidence)
+            method = "ML weather forecast + historical baseline"
+        else:
+            aqi_prediction = stat_aqi
+            traffic_prediction = stat_traffic
+            confidence = stat_confidence
+            method = "Historical statistical baseline"
+
+        if conditions.get("source") == "forecast":
+            confidence = min(0.97, confidence + 0.03)
+        elif conditions.get("source") == "historical_average":
+            confidence = max(0.35, confidence - 0.05)
+
+        return {
+            "aqi_prediction": max(0, min(500, aqi_prediction)),
+            "traffic_prediction": max(0.0, min(100.0, traffic_prediction)),
+            "confidence": max(0.0, min(0.99, confidence)),
+            "method": method,
+            "ml_result": ml_result,
+            "base_insight": base_insight,
+            "has_history_data": has_history_data,
+        }
+
     # ── Main prediction entry point ──────────────────────────────────────
 
     async def predict(
@@ -209,7 +348,7 @@ class PredictionService:
         - live_aqi / live_traffic / live_temp: live readings from Go backend
         """
         lang = (language or "ru").lower()[:2]  # normalize: "ru", "en", "kk"
-        now = datetime.now()
+        now = local_now()
 
         # Parse target date
         if date:
@@ -221,66 +360,26 @@ class PredictionService:
             target_date = now
 
         month = target_date.month
-        day_of_week = target_date.weekday()
-        is_weekend = day_of_week >= 5
-
-        # Prefer live temperature, then passed temperature, then monthly mean
-        # Use 'is not None' to avoid discarding 0°C (falsy but valid)
-        effective_temp = live_temp if live_temp is not None else temperature
+        is_weekend = target_date.weekday() >= 5
         stats = self.monthly_stats.get(month, {})
-        if effective_temp is None and stats:
-            effective_temp = stats.get("temp_mean", 0)
 
-        # ── Step 1: ML model prediction (GradientBoosting + RandomForest) ──
-        ml_result = self._ml_predict(month, day_of_week, is_weekend, effective_temp, live_aqi, live_traffic)
-
-        # ── Step 2: Statistical prediction (fallback / blend) ──
-        stat_aqi, stat_traffic, stat_confidence, base_insight = self._predict_from_data(
-            month=month, temperature=effective_temp, is_weekend=is_weekend,
-        )
-        has_history_data = bool(stats) or (self.df is not None and not self.df.empty)
-
-        # ── Step 3: Blend ML + statistical predictions ──
-        # Weights: 70% ML / 30% statistics.
-        # Justification: ML R^2~0.62 captures day-to-day weather-PM2.5 dynamics;
-        # monthly statistics provide a stable seasonal baseline (bias correction).
-        # Standard ensemble approach for noisy environmental data.
-        ML_WEIGHT = 0.70
-        STAT_WEIGHT = 1.0 - ML_WEIGHT
-        _METHOD_LABELS = {
-            "ru": {
-                "ml": "ML (метео->PM2.5->AQI по формуле EPA 2024) + статистика (70/30 blend)",
-                "stat": "Статистическая модель (линейная регрессия)",
-            },
-            "en": {
-                "ml": "ML (meteo->PM2.5->AQI via EPA 2024 formula) + statistics (70/30 blend)",
-                "stat": "Statistical model (linear regression)",
-            },
-            "kk": {
-                "ml": "ML (метео->PM2.5->AQI EPA 2024 формуласы) + статистика (70/30 blend)",
-                "stat": "Статистикалық модель (сызықтық регрессия)",
-            },
-        }
-        ml = _METHOD_LABELS.get(lang, _METHOD_LABELS["ru"])
-        if ml_result and "error" not in ml_result:
-            aqi_prediction = int(round(ML_WEIGHT * ml_result["aqi_prediction"] + STAT_WEIGHT * stat_aqi))
-            traffic_prediction = round(ML_WEIGHT * ml_result["traffic_prediction"] + STAT_WEIGHT * stat_traffic, 1)
-            confidence = min(0.95, ML_WEIGHT * ml_result["confidence"] + STAT_WEIGHT * stat_confidence)
-            method = ml["ml"]
-        else:
-            aqi_prediction = stat_aqi
-            traffic_prediction = stat_traffic
-            confidence = stat_confidence
-            method = ml["stat"]
-
-        # Clamp
-        aqi_prediction = max(0, min(500, aqi_prediction))
-        traffic_prediction = max(0, min(100, traffic_prediction))
-
-        # ── Step 4: Fetch Open-Meteo forecast (+3 days) ──
         forecast = await self.forecast_service.get_forecast()
+        conditions = self._resolve_target_conditions(
+            target_date=target_date,
+            requested_temperature=temperature,
+            live_temp=live_temp,
+            forecast=forecast,
+        )
+        numeric = self._predict_numeric(
+            target_date=target_date,
+            conditions=conditions,
+            live_aqi=live_aqi,
+            live_traffic=live_traffic,
+            live_temp=live_temp,
+        )
         forecast_text = self.forecast_service.format_for_prompt(
-            forecast, target_date=date
+            forecast,
+            target_date=target_date.strftime("%Y-%m-%d"),
         )
 
         # ── Step 5: LLM prediction with full context ──
@@ -288,67 +387,71 @@ class PredictionService:
             groq_text = await self._get_groq_prediction_v2(
                 target_date=target_date,
                 now=now,
-                temperature=effective_temp,
-                aqi=aqi_prediction,
-                traffic=traffic_prediction,
+                temperature=conditions["temperature"],
+                aqi=numeric["aqi_prediction"],
+                traffic=numeric["traffic_prediction"],
                 query=query,
                 stats=stats,
                 live_aqi=live_aqi,
                 live_traffic=live_traffic,
                 forecast_text=forecast_text,
-                ml_method=method,
-                ml_result=ml_result,
+                ml_method=numeric["method"],
+                ml_result=numeric["ml_result"],
                 language=lang,
             )
             # _get_groq_prediction_v2 returns None on Groq failure
             if groq_text is not None:
                 prediction_text = groq_text
             else:
-                prediction_text = base_insight
+                prediction_text = numeric["base_insight"]
         else:
-            prediction_text = base_insight
+            prediction_text = numeric["base_insight"]
 
         # Clarify statistical traffic basis in non-LLM responses.
-        if prediction_text == base_insight and has_history_data and stats:
+        if prediction_text == numeric["base_insight"] and numeric["has_history_data"] and stats:
             period = self._history_period_label()
-            if lang == "ru":
-                day_type = "выходной день" if is_weekend else "будний день"
-                basis_note = (
-                    f"Основа трафика: среднее по этому месяцу за {stats.get('records', '?')} исторических дней "
-                    f"({period}), с поправкой на {day_type}."
-                )
-            elif lang == "kk":
-                day_type = "демалыс күні" if is_weekend else "жұмыс күні"
-                basis_note = (
-                    f"Трафик негізі: осы ай бойынша {stats.get('records', '?')} тарихи күннің орташа мәні "
-                    f"({period}), {day_type} түзетуімен."
-                )
-            else:
+            if lang == "en":
                 day_type = "weekend" if is_weekend else "weekday"
                 basis_note = (
-                    f"Traffic basis: same-month historical average over {stats.get('records', '?')} days "
+                    f" Traffic basis: same-month historical average over {stats.get('records', '?')} days "
                     f"({period}), adjusted for {day_type}."
+                )
+            else:
+                basis_note = (
+                    f" Traffic basis: {stats.get('records', '?')} same-month historical days ({period})."
                 )
             prediction_text = f"{prediction_text} {basis_note}"
 
         # `is_mock` should indicate data provenance, not LLM availability.
-        is_mock = not has_history_data
+        is_mock = not numeric["has_history_data"]
 
         return {
             "prediction": prediction_text,
-            "confidence_score": round(confidence, 2),
-            "aqi_prediction": aqi_prediction,
-            "traffic_index_prediction": round(traffic_prediction, 1),
-            "reasoning": self._get_reasoning_v2(month, effective_temp, method, ml_result, lang),
+            "confidence_score": round(numeric["confidence"], 2),
+            "aqi_prediction": numeric["aqi_prediction"],
+            "traffic_index_prediction": round(numeric["traffic_prediction"], 1),
+            "reasoning": self._get_reasoning_v2(
+                month,
+                conditions["temperature"],
+                numeric["method"],
+                numeric["ml_result"],
+                lang,
+            ),
             "is_mock": is_mock,
         }
 
     # ── ML model prediction ──────────────────────────────────────────────
 
     def _ml_predict(
-        self, month: int, day_of_week: int, is_weekend: bool,
+        self,
+        target_date: datetime,
         temperature: Optional[float],
-        live_aqi: Optional[int], live_traffic: Optional[float],
+        humidity: float,
+        wind_speed: float,
+        precipitation: float,
+        live_aqi: Optional[int],
+        live_traffic: Optional[float],
+        live_temp: Optional[float],
     ) -> Optional[Dict[str, Any]]:
         """
         Run trained ML models: meteo → PM2.5 (ML), PM2.5 → AQI (EPA formula).
@@ -361,52 +464,51 @@ class PredictionService:
         if not self.ml_model.is_trained or temperature is None:
             return None
 
+        month = target_date.month
+        day_of_week = target_date.weekday()
+        is_weekend = day_of_week >= 5
         stats = self.monthly_stats.get(month, {})
-        lag_features_known = False  # explicit flag: True only when we have real data
+        recent_history = self._get_recent_history_window(target_date)
+        lag_features_known = False
 
-        # --- PM2.5 lag: try to get real recent data ---
-        prev_pm25 = stats.get("pm25_mean", 25.0)  # fallback
-        avg_pm25_7d = prev_pm25  # fallback
-
-        if live_aqi is not None and live_aqi > 0:
-            # Reverse AQI->PM2.5 estimate (approximate, for lag only)
+        prev_pm25 = float(stats.get("pm25_mean", 25.0))
+        avg_pm25_7d = prev_pm25
+        if recent_history is not None and "pm25" in recent_history.columns and not recent_history["pm25"].isna().all():
+            avg_pm25_7d = float(recent_history["pm25"].mean())
+            prev_pm25 = float(recent_history["pm25"].iloc[-1])
+            lag_features_known = True
+        elif live_aqi is not None and live_aqi > 0:
             prev_pm25 = self._aqi_to_approx_pm25(live_aqi)
-            avg_pm25_7d = prev_pm25  # best available proxy
+            avg_pm25_7d = prev_pm25
             lag_features_known = True
 
-        # Use most recent data from CSV if available
-        if self.df is not None and not self.df.empty:
-            last_rows = self.df.tail(7)
-            if "pm25" in last_rows.columns and not last_rows["pm25"].isna().all():
-                avg_pm25_7d = float(last_rows["pm25"].mean())
-                prev_pm25 = float(last_rows["pm25"].iloc[-1])
-                lag_features_known = True
-
-        # --- Traffic lag ---
-        prev_traffic = live_traffic if live_traffic is not None else stats.get("traffic_mean", 45)
+        prev_traffic = float(stats.get("traffic_mean", 45.0))
         avg_traffic_7d = prev_traffic
-        if self.df is not None and not self.df.empty:
-            last_rows = self.df.tail(7)
-            if "traffic_index" in last_rows.columns:
-                avg_traffic_7d = float(last_rows["traffic_index"].mean())
+        if recent_history is not None and "traffic_index" in recent_history.columns:
+            avg_traffic_7d = float(recent_history["traffic_index"].mean())
+            prev_traffic = float(recent_history["traffic_index"].iloc[-1])
+            lag_features_known = True
+        elif live_traffic is not None:
+            prev_traffic = float(live_traffic)
+            avg_traffic_7d = float(live_traffic)
+            lag_features_known = True
 
-        # --- Temperature lag (must match training: shift(1) = yesterday) ---
-        # At training time: temp_lag1 = df["temperature"].shift(1) (yesterday)
-        #                   temp_rolling7 = df["temperature"].shift(1).rolling(7).mean()
-        # At inference: use actual CSV data to match the same signal distribution
-        prev_temp = temperature  # fallback: current temp (imperfect)
-        avg_temp_7d = stats.get("temp_mean", temperature)  # fallback: monthly mean
-        if self.df is not None and not self.df.empty:
-            last_rows = self.df.tail(7)
-            if "temperature" in last_rows.columns and not last_rows["temperature"].isna().all():
-                prev_temp = float(last_rows["temperature"].iloc[-1])  # yesterday's actual temp
-                avg_temp_7d = float(last_rows["temperature"].mean())  # 7-day rolling actual
+        prev_temp = float(stats.get("temp_mean", temperature))
+        avg_temp_7d = float(stats.get("temp_mean", temperature))
+        if recent_history is not None and "temperature" in recent_history.columns and not recent_history["temperature"].isna().all():
+            prev_temp = float(recent_history["temperature"].iloc[-1])
+            avg_temp_7d = float(recent_history["temperature"].mean())
+            lag_features_known = True
+        elif live_temp is not None:
+            prev_temp = float(live_temp)
+            avg_temp_7d = float(live_temp)
+            lag_features_known = True
 
         return self.ml_model.predict(
-            temperature=temperature,
-            humidity=stats.get("humidity_mean", 60),
-            wind_speed=stats.get("wind_mean", 8),
-            precipitation=stats.get("precip_mean", 0),
+            temperature=float(temperature),
+            humidity=float(humidity),
+            wind_speed=float(wind_speed),
+            precipitation=float(precipitation),
             month=month,
             day_of_week=day_of_week,
             is_weekend=is_weekend,
@@ -923,6 +1025,108 @@ RULES:
 
         return ". ".join(reasons) + "."
 
+    def _build_monthly_overview(self) -> List[Dict[str, Any]]:
+        """Aggregate historical monthly analytics directly from the CSV dataset."""
+        if self.df is None or self.df.empty:
+            return []
+
+        overview: List[Dict[str, Any]] = []
+        for month in range(1, 13):
+            month_df = self.df[self.df["month"] == month]
+            if month_df.empty:
+                continue
+
+            record_count = len(month_df)
+            overview.append(
+                {
+                    "month": month,
+                    "records": record_count,
+                    "temp_mean": round(float(month_df["temperature"].mean()), 1),
+                    "aqi_mean": round(float(month_df["aqi"].mean()), 1),
+                    "traffic_mean": round(float(month_df["traffic_index"].mean()), 1),
+                    "pm25_mean": round(float(month_df["pm25"].mean()), 1) if "pm25" in month_df.columns else None,
+                    "high_aqi_pct": round(float((month_df["aqi"] > 100).mean() * 100), 1),
+                    "high_traffic_pct": round(float((month_df["traffic_index"] > 70).mean() * 100), 1),
+                    "combined_risk_pct": round(
+                        float(((month_df["aqi"] > 100) & (month_df["traffic_index"] > 70)).mean() * 100),
+                        1,
+                    ),
+                }
+            )
+
+        return overview
+
+    @staticmethod
+    def _compute_risk_score(aqi: int, traffic: float) -> float:
+        """Blend AQI and traffic into a single 0-100 urban risk score."""
+        aqi_component = min(60.0, (max(0, aqi) / 150.0) * 60.0)
+        traffic_component = min(40.0, (max(0.0, traffic) / 80.0) * 40.0)
+        return round(min(100.0, aqi_component + traffic_component), 1)
+
+    async def get_analytics_data(
+        self,
+        live_aqi: Optional[int] = None,
+        live_traffic: Optional[float] = None,
+        live_temp: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Build analytics payload from historical CSV data and forecast-driven predictions."""
+        forecast = await self.forecast_service.get_forecast()
+        monthly_overview = self._build_monthly_overview()
+
+        today = local_now().replace(hour=0, minute=0, second=0, microsecond=0)
+        forecast_days: List[Dict[str, Any]] = []
+
+        for offset in range(7):
+            target_date = today + timedelta(days=offset)
+            conditions = self._resolve_target_conditions(
+                target_date=target_date,
+                requested_temperature=None,
+                live_temp=live_temp,
+                forecast=forecast,
+            )
+            numeric = self._predict_numeric(
+                target_date=target_date,
+                conditions=conditions,
+                live_aqi=live_aqi,
+                live_traffic=live_traffic,
+                live_temp=live_temp,
+            )
+            forecast_day = conditions.get("forecast_day") or {}
+
+            forecast_days.append(
+                {
+                    "date": target_date.strftime("%Y-%m-%d"),
+                    "temperature": round(float(conditions["temperature"]), 1),
+                    "humidity": round(float(conditions["humidity"]), 1),
+                    "wind_speed": round(float(conditions["wind_speed"]), 1),
+                    "precipitation": round(float(conditions["precipitation"]), 1),
+                    "weather_code": forecast_day.get("weather_code"),
+                    "aqi_api_mean": forecast_day.get("aqi_mean"),
+                    "aqi_prediction": numeric["aqi_prediction"],
+                    "traffic_prediction": round(float(numeric["traffic_prediction"]), 1),
+                    "confidence": round(float(numeric["confidence"]), 2),
+                    "risk_score": self._compute_risk_score(
+                        numeric["aqi_prediction"],
+                        float(numeric["traffic_prediction"]),
+                    ),
+                    "source": conditions["source"],
+                }
+            )
+
+        return {
+            "metadata": {
+                "total_records": len(self.df) if self.df is not None else 0,
+                "date_range": {
+                    "start": str(self.df["date"].min().date()) if self.df is not None and not self.df.empty else None,
+                    "end": str(self.df["date"].max().date()) if self.df is not None and not self.df.empty else None,
+                },
+                "history_period": self._history_period_label(),
+            },
+            "monthly_overview": monthly_overview,
+            "forecast_days": forecast_days,
+            "correlations": self.correlations,
+        }
+
     # ── Stats endpoint ─────────────────────────────────────────────────
 
     def get_data_stats(self) -> Dict[str, Any]:
@@ -957,6 +1161,7 @@ RULES:
             "correlations": self.correlations,
             "seasonal": seasonal_stats,
             "monthly": {str(k): v for k, v in self.monthly_stats.items()},
+            "monthly_overview": self._build_monthly_overview(),
             "hourly_patterns": self.hourly_patterns,
         }
 
