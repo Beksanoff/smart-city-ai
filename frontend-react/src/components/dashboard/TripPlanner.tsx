@@ -58,8 +58,6 @@ function TripPlanner() {
 
         const request: PredictionRequest = {}
         if (date) request.date = date
-        // Температура подставляется автоматически из Open-Meteo
-        if (autoTemperature !== null) request.temperature = autoTemperature
         if (query) request.query = query
         // Pass current UI language so the AI responds in the same language
         request.language = i18n.language

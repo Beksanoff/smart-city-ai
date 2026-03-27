@@ -1,63 +1,60 @@
 import { useMemo } from 'react'
-import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import {
-    AreaChart,
-    Area,
+    ComposedChart,
+    Line,
+    Bar,
     XAxis,
     YAxis,
     CartesianGrid,
     Tooltip,
     ResponsiveContainer,
-    ReferenceLine
+    ReferenceLine,
 } from 'recharts'
-import { api } from '../../services/api'
 import { Wind } from 'lucide-react'
+import type { AnalyticsForecastDay } from '../../services/api'
 
-const DAY_KEYS = ['chart.daySun', 'chart.dayMon', 'chart.dayTue', 'chart.dayWed', 'chart.dayThu', 'chart.dayFri', 'chart.daySat'] as const
+interface AQIHistoryChartProps {
+    forecastDays: AnalyticsForecastDay[]
+    isLoading: boolean
+}
 
-export default function AQIHistoryChart() {
-    const { t } = useTranslation()
-    const { data: weatherHistory, isLoading } = useQuery({
-        queryKey: ['weatherHistory', 168],
-        queryFn: () => api.getWeatherHistory(168),
-        refetchInterval: 5 * 60_000,
-    })
+export default function AQIHistoryChart({ forecastDays, isLoading }: AQIHistoryChartProps) {
+    const { t, i18n } = useTranslation()
 
-    const chartData = useMemo(() => {
-        if (!weatherHistory || weatherHistory.length === 0) return null
+    const chartData = useMemo(() => (
+        forecastDays.map((day) => ({
+            ...day,
+            label: new Intl.DateTimeFormat(i18n.language, {
+                weekday: 'short',
+                day: 'numeric',
+            }).format(new Date(`${day.date}T12:00:00`)),
+        }))
+    ), [forecastDays, i18n.language])
 
-        const byDay: Record<string, { total: number; count: number; dayIndex: number; date: string }> = {}
-        weatherHistory.forEach((w) => {
-            const d = new Date(w.timestamp)
-            const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-            if (!byDay[key]) {
-                byDay[key] = { total: 0, count: 0, dayIndex: d.getDay(), date: key }
-            }
-            byDay[key].total += w.aqi
-            byDay[key].count += 1
-        })
+    const hasData = chartData.length > 0
 
-        return Object.entries(byDay)
-            .sort(([a], [b]) => a.localeCompare(b))
-            .slice(-7)
-            .map(([, v]) => ({
-                day: t(DAY_KEYS[v.dayIndex]),
-                aqi: Math.round(v.total / v.count),
-                date: v.date,
-            }))
-    }, [weatherHistory, t])
-
-    const hasData = chartData !== null && chartData.length > 0
-
-    const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: Array<{ value?: number }>; label?: string }) => {
+    const CustomTooltip = ({
+        active,
+        payload,
+        label,
+    }: {
+        active?: boolean
+        payload?: Array<{ dataKey?: string | number; value?: number; color?: string }>
+        label?: string
+    }) => {
         if (!active || !payload?.length) return null
+
+        const aqiValue = payload.find((item) => item.dataKey === 'aqi_prediction')?.value ?? 0
+        const trafficValue = payload.find((item) => item.dataKey === 'traffic_prediction')?.value ?? 0
+        const riskValue = payload.find((item) => item.dataKey === 'risk_score')?.value ?? 0
+
         return (
             <div className="bg-cyber-dark border border-cyber-border rounded-lg px-3 py-2 shadow-lg">
                 <p className="text-xs text-cyber-muted mb-1">{label}</p>
-                <p className="text-sm font-semibold" style={{ color: (payload[0]?.value ?? 0) > 100 ? '#ef4444' : '#22d3ee' }}>
-                    {t('analytics.aqiValue', { value: payload[0]?.value })}
-                </p>
+                <p className="text-sm font-semibold text-cyber-cyan">{t('analytics.aqiValue', { value: aqiValue })}</p>
+                <p className="text-sm font-semibold text-cyber-purple">{t('analytics.trafficPercent', { value: trafficValue })}</p>
+                <p className="text-xs text-cyber-muted mt-1">{t('analytics.riskScore', { value: riskValue })}</p>
             </div>
         )
     }
@@ -80,20 +77,16 @@ export default function AQIHistoryChart() {
 
             <div className="flex flex-wrap gap-x-4 gap-y-1 mb-3 text-[11px]">
                 <span className="flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-full bg-green-500 shrink-0" />
-                    {t('analytics.legendGood')}
+                    <span className="w-5 h-[3px] rounded-full shrink-0 bg-cyber-cyan" />
+                    {t('analytics.forecastAqi')}
                 </span>
                 <span className="flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-full bg-yellow-500 shrink-0" />
-                    {t('analytics.legendModerate')}
+                    <span className="w-3 h-3 rounded-sm shrink-0 bg-cyber-purple" />
+                    {t('analytics.forecastTraffic')}
                 </span>
                 <span className="flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-full bg-orange-500 shrink-0" />
+                    <span className="w-2.5 h-2.5 rounded-full shrink-0 bg-red-500" />
                     {t('analytics.legendBad')}
-                </span>
-                <span className="flex items-center gap-1.5">
-                    <span className="w-2.5 h-2.5 rounded-full bg-red-500 shrink-0" />
-                    {t('analytics.legendDangerous')}
                 </span>
             </div>
 
@@ -103,48 +96,74 @@ export default function AQIHistoryChart() {
                 </div>
             )}
 
-            <div className="h-[280px]">
+            <div className="h-[300px]">
                 {hasData ? (
                     <ResponsiveContainer width="100%" height="100%">
-                        <AreaChart data={chartData} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
-                            <defs>
-                                <linearGradient id="aqiGradient" x1="0" y1="0" x2="0" y2="1">
-                                    <stop offset="5%" stopColor="#22d3ee" stopOpacity={0.3} />
-                                    <stop offset="95%" stopColor="#22d3ee" stopOpacity={0} />
-                                </linearGradient>
-                            </defs>
+                        <ComposedChart data={chartData} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
                             <CartesianGrid strokeDasharray="3 3" stroke="#1f1f2e" />
-                            <XAxis dataKey="day" stroke="#6b7280" tick={{ fontSize: 12 }} />
-                            <YAxis stroke="#6b7280" tick={{ fontSize: 12 }} domain={[0, 'auto']} />
+                            <XAxis dataKey="label" stroke="#6b7280" tick={{ fontSize: 11 }} />
+                            <YAxis
+                                yAxisId="left"
+                                stroke="#22d3ee"
+                                tick={{ fontSize: 11 }}
+                                domain={[0, 180]}
+                                width={38}
+                            />
+                            <YAxis
+                                yAxisId="right"
+                                orientation="right"
+                                stroke="#8b5cf6"
+                                tick={{ fontSize: 11 }}
+                                width={38}
+                                domain={[0, 100]}
+                                tickFormatter={(value) => `${value}%`}
+                            />
                             <Tooltip content={<CustomTooltip />} />
                             <ReferenceLine
+                                yAxisId="left"
                                 y={100}
                                 stroke="#ef4444"
                                 strokeDasharray="4 4"
                                 strokeWidth={1.5}
-                                label={{ value: t('analytics.aqiDanger'), position: 'right', fill: '#ef4444', fontSize: 11 }}
                             />
-                            <Area
+                            <Bar
+                                yAxisId="right"
+                                dataKey="traffic_prediction"
+                                barSize={16}
+                                fill="#8b5cf6"
+                                radius={[4, 4, 0, 0]}
+                                fillOpacity={0.72}
+                            />
+                            <Line
+                                yAxisId="left"
                                 type="monotone"
-                                dataKey="aqi"
+                                dataKey="aqi_prediction"
                                 stroke="#22d3ee"
                                 strokeWidth={2.5}
-                                fill="url(#aqiGradient)"
-                                dot={{ fill: '#22d3ee', r: 4, strokeWidth: 2, stroke: '#0a0a0f' }}
-                                activeDot={{ r: 6, stroke: '#22d3ee', strokeWidth: 2, fill: '#0a0a0f' }}
+                                dot={{ fill: '#22d3ee', r: 3, strokeWidth: 0 }}
+                                activeDot={{ r: 5, stroke: '#22d3ee', strokeWidth: 2, fill: '#0a0a0f' }}
                             />
-                        </AreaChart>
+                            <Line
+                                yAxisId="right"
+                                type="monotone"
+                                dataKey="risk_score"
+                                stroke="#f59e0b"
+                                strokeWidth={1.75}
+                                strokeDasharray="5 4"
+                                dot={false}
+                            />
+                        </ComposedChart>
                     </ResponsiveContainer>
                 ) : !isLoading ? (
-                    <div className="flex flex-col items-center justify-center h-[280px] text-center px-4">
+                    <div className="flex flex-col items-center justify-center h-[300px] text-center px-4">
                         <div className="w-16 h-16 rounded-full bg-yellow-500/10 flex items-center justify-center mb-4">
                             <Wind className="w-8 h-8 text-yellow-500/50" />
                         </div>
                         <p className="text-sm text-yellow-500 font-medium mb-1">
-                            {t('analytics.dataCollecting')}
+                            {t('analytics.noDataTitle')}
                         </p>
                         <p className="text-xs text-cyber-muted max-w-[280px] leading-relaxed">
-                            {t('analytics.dataCollectingHint')}
+                            {t('analytics.noDataHint')}
                         </p>
                     </div>
                 ) : null}

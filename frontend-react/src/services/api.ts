@@ -78,6 +78,47 @@ export interface PredictionResponse {
     is_mock: boolean
 }
 
+export interface AnalyticsForecastDay {
+    date: string
+    temperature: number
+    humidity: number
+    wind_speed: number
+    precipitation: number
+    weather_code?: number | null
+    aqi_api_mean?: number | null
+    aqi_prediction: number
+    traffic_prediction: number
+    confidence: number
+    risk_score: number
+    source: string
+}
+
+export interface AnalyticsMonthlyOverview {
+    month: number
+    records: number
+    temp_mean: number
+    aqi_mean: number
+    traffic_mean: number
+    pm25_mean?: number | null
+    high_aqi_pct: number
+    high_traffic_pct: number
+    combined_risk_pct: number
+}
+
+export interface AnalyticsData {
+    metadata: {
+        total_records: number
+        date_range: {
+            start: string | null
+            end: string | null
+        }
+        history_period: string
+    }
+    monthly_overview: AnalyticsMonthlyOverview[]
+    forecast_days: AnalyticsForecastDay[]
+    correlations: Record<string, number>
+}
+
 export interface ApiResponse<T> {
     success: boolean
     data: T
@@ -201,6 +242,18 @@ export const api = {
         try {
             const response = await apiClient.get('/api/v1/stats')
             return response.data
+        } catch {
+            return null
+        }
+    },
+
+    /**
+     * Get analytics built from historical CSV data and forecast-driven predictions
+     */
+    getAnalytics: async (): Promise<AnalyticsData | null> => {
+        try {
+            const response = await apiClient.get<ApiResponse<AnalyticsData>>('/api/v1/analytics')
+            return response.data.data
         } catch {
             return null
         }

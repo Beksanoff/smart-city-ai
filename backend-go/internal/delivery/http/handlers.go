@@ -169,6 +169,32 @@ func (h *Handler) GetStats(c *fiber.Ctx) error {
 	return c.JSON(result)
 }
 
+// GetAnalytics proxies analytics request to Python ML service via MLBridge
+func (h *Handler) GetAnalytics(c *fiber.Ctx) error {
+	ctx := c.Context()
+	req := domain.PredictionRequest{}
+
+	dashData, dashErr := h.dashboardSvc.GetDashboardData(ctx)
+	if dashErr == nil {
+		aqi := dashData.Weather.AQI
+		traffic := dashData.Traffic.CongestionIndex
+		temp := dashData.Weather.Temperature
+		req.LiveAQI = &aqi
+		req.LiveTraffic = &traffic
+		req.LiveTemp = &temp
+	} else {
+		log.Printf("Could not fetch live data for analytics enrichment: %v", dashErr)
+	}
+
+	result, err := h.mlBridge.GetAnalytics(ctx, req)
+	if err != nil {
+		log.Printf("Analytics fetch error: %v", err)
+		return fiber.NewError(fiber.StatusServiceUnavailable, "ML analytics unavailable")
+	}
+
+	return c.JSON(result)
+}
+
 // GetHistoricalWeather returns weather history within a time range
 func (h *Handler) GetHistoricalWeather(c *fiber.Ctx) error {
 	ctx := c.Context()

@@ -1,15 +1,25 @@
+import { useQuery } from '@tanstack/react-query'
 import { BarChart3, Info } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { api } from '../../services/api'
 import AQIHistoryChart from './AQIHistoryChart'
 import TrafficByHourChart from './TrafficByHourChart'
 import CorrelationChart from './CorrelationChart'
 
 export default function AnalyticsDashboard() {
     const { t } = useTranslation()
+    const { data, isLoading } = useQuery({
+        queryKey: ['analytics'],
+        queryFn: api.getAnalytics,
+        refetchInterval: 15 * 60_000,
+        staleTime: 5 * 60_000,
+    })
+
+    const forecastDays = data?.forecast_days ?? []
+    const monthlyOverview = data?.monthly_overview ?? []
 
     return (
         <div className="space-y-6">
-            {/* Header */}
             <div className="flex items-center gap-3 mb-2 min-w-0">
                 <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-cyber-purple to-pink-500 flex items-center justify-center shrink-0">
                     <BarChart3 className="w-5 h-5 text-white" />
@@ -20,10 +30,9 @@ export default function AnalyticsDashboard() {
                 </div>
             </div>
 
-            {/* Top row: AQI + Traffic side by side */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="space-y-2 min-w-0">
-                    <AQIHistoryChart />
+                    <AQIHistoryChart forecastDays={forecastDays} isLoading={isLoading} />
                     <div className="flex items-start gap-1.5 px-2">
                         <Info className="w-3.5 h-3.5 text-cyber-muted shrink-0 mt-0.5" />
                         <p className="text-[11px] text-cyber-muted leading-relaxed">
@@ -32,7 +41,7 @@ export default function AnalyticsDashboard() {
                     </div>
                 </div>
                 <div className="space-y-2 min-w-0">
-                    <TrafficByHourChart />
+                    <TrafficByHourChart monthlyOverview={monthlyOverview} isLoading={isLoading} />
                     <div className="flex items-start gap-1.5 px-2">
                         <Info className="w-3.5 h-3.5 text-cyber-muted shrink-0 mt-0.5" />
                         <p className="text-[11px] text-cyber-muted leading-relaxed">
@@ -42,9 +51,8 @@ export default function AnalyticsDashboard() {
                 </div>
             </div>
 
-            {/* Bottom row: Correlation full-width */}
             <div className="space-y-2 min-w-0">
-                <CorrelationChart />
+                <CorrelationChart monthlyOverview={monthlyOverview} isLoading={isLoading} />
                 <div className="flex items-start gap-1.5 px-2">
                     <Info className="w-3.5 h-3.5 text-cyber-muted shrink-0 mt-0.5" />
                     <p className="text-[11px] text-cyber-muted leading-relaxed">
