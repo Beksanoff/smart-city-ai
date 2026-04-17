@@ -28,14 +28,17 @@ import {
 import { api } from './services/api'
 import type { YandexTrafficScore } from './components/map/AlmatyMap'
 import AlmatyMap from './components/map/AlmatyMap'
+import WeatherWidget from './components/dashboard/WeatherWidget'
+import TrafficWidget from './components/dashboard/TrafficWidget'
+import AQIWidget from './components/dashboard/AQIWidget'
 import TripPlanner from './components/dashboard/TripPlanner'
 import AnalyticsDashboard from './components/analytics/AnalyticsDashboard'
 import ErrorBoundary from './components/ErrorBoundary'
 
 const LANG_OPTIONS = [
-    { code: 'ru', label: 'RU' },
-    { code: 'en', label: 'EN' },
-    { code: 'kk', label: 'KK' },
+    { code: 'ru', label: 'Рус' },
+    { code: 'en', label: 'Eng' },
+    { code: 'kk', label: 'Қаз' },
 ] as const
 
 type TabType = 'monitor' | 'planner' | 'analytics'
@@ -501,84 +504,9 @@ function App() {
 
                         <section className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-                            <article className="p-6 rounded-3xl bg-slate-900/60 backdrop-blur-md border border-white/5 hover:border-cyan-500/30 transition-colors duration-300 group cursor-pointer">
-                                <div className="flex justify-between items-start mb-6">
-                                    <div>
-                                        <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1">{t('weather.title')}</p>
-                                        <h3 className="text-xl font-bold text-white">{weatherData?.city ?? 'Almaty'}</h3>
-                                    </div>
-                                    <div className="w-10 h-10 rounded-full bg-sky-500/10 flex items-center justify-center text-sky-400 group-hover:scale-110 transition-transform">
-                                        <CloudSun className="w-5 h-5" />
-                                    </div>
-                                </div>
-                                <div className="flex items-end justify-between">
-                                    <div className="flex items-start">
-                                        <span className="text-5xl font-bold text-white tracking-tighter leading-none">{isLoading ? '--' : weatherTemp ?? '--'}</span>
-                                        <span className="text-xl font-semibold text-slate-400 mt-1 ml-1">°C</span>
-                                    </div>
-                                    <div className="flex flex-col gap-1 text-sm font-medium text-slate-400">
-                                        <div className="flex items-center gap-2 justify-end">
-                                            <Droplets className="w-4 h-4 text-sky-400" />
-                                            {humidity}%
-                                        </div>
-                                        <div className="flex items-center gap-2 justify-end">
-                                            <Wind className="w-4 h-4 text-sky-400" />
-                                            {windKmh} {t('traffic.kmh')}
-                                        </div>
-                                    </div>
-                                </div>
-                            </article>
-
-
-                            <article className="p-6 rounded-3xl bg-slate-900/60 backdrop-blur-md border border-white/5 hover:border-emerald-500/30 transition-colors duration-300 group cursor-pointer">
-                                <div className="flex justify-between items-start mb-6">
-                                    <div>
-                                        <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1">{t('traffic.title')}</p>
-                                        <h3 className="text-xl font-bold text-white">{translatedTrafficLevel}</h3>
-                                    </div>
-                                    <div className="w-10 h-10 rounded-full bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20 text-emerald-400 font-bold text-lg">
-                                        {trafficScore}
-                                    </div>
-                                </div>
-                                <div>
-                                    <div className="flex justify-between items-center text-sm mb-2">
-                                        <span className="text-slate-400">{t('traffic.avgSpeed')}</span>
-                                        <strong className="text-white bg-slate-800 px-2 py-1 rounded-md">{avgSpeed} {t('traffic.kmh')}</strong>
-                                    </div>
-                                    <div className="h-2 w-full bg-slate-800 rounded-full overflow-hidden mb-3">
-                                        <div className="h-full bg-gradient-to-r from-emerald-400 to-emerald-300 rounded-full transition-all duration-1000" style={{ width: `${congestionIndex}%` }} />
-                                    </div>
-                                    <div className="flex justify-between items-center text-sm font-medium">
-                                        <span className="text-slate-500">{t('traffic.incidents')}</span>
-                                        <span className="text-slate-300">{incidentsCount}</span>
-                                    </div>
-                                </div>
-                            </article>
-
-
-                            <article className="p-6 rounded-3xl bg-slate-900/60 backdrop-blur-md border border-white/5 hover:border-amber-500/30 transition-colors duration-300 group cursor-pointer">
-                                <div className="flex justify-between items-start mb-6">
-                                    <div>
-                                        <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1">{t('aqi.title')}</p>
-                                        <h3 className="text-xl font-bold text-white">{safeAqi > 0 ? `AQI ${safeAqi}` : copy.unknown}</h3>
-                                    </div>
-                                    <div className={`w-10 h-10 rounded-full flex items-center justify-center text-amber-400 bg-amber-500/10 group-hover:scale-110 transition-transform`}>
-                                        <Leaf className="w-5 h-5" />
-                                    </div>
-                                </div>
-                                <div>
-                                    <div className="flex justify-between items-center mb-4">
-                                        <span className="font-semibold text-amber-400">{aqiStatus.label}</span>
-                                        <strong className="text-sm text-slate-400 bg-slate-800 px-2 py-1 rounded-md">PM2.5</strong>
-                                    </div>
-                                    <div className="flex items-center gap-1 relative h-2">
-                                        <div className="flex-1 h-full bg-emerald-400 rounded-l-full"></div>
-                                        <div className="flex-1 h-full bg-amber-400"></div>
-                                        <div className="flex-1 h-full bg-orange-500 rounded-r-full"></div>
-                                        <div className="absolute top-1/2 -ml-1.5 w-3 h-3 rounded-full bg-white border-2 border-slate-900 transform -translate-y-1/2 shadow-sm transition-all duration-1000" style={{ left: `${aqiStatus.track}%` }} />
-                                    </div>
-                                </div>
-                            </article>
+                            <WeatherWidget data={weatherData} isLoading={isLoading} />
+                            <TrafficWidget data={trafficData} isLoading={isLoading} />
+                            <AQIWidget aqi={weatherData?.aqi} isLoading={isLoading} />
                         </section>
                         </div>
 
@@ -699,6 +627,10 @@ function App() {
                         </ErrorBoundary>
                     </main>
                 )}
+
+                <footer className="px-6 py-4 border-t border-white/5 bg-slate-950/60 text-xs text-slate-500">
+                    Smart City AI • Diploma project
+                </footer>
             </div>
             
 
