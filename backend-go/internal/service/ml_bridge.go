@@ -13,13 +13,11 @@ import (
 	"github.com/smartcity/backend/internal/domain"
 )
 
-// MLBridge handles communication with Python ML service
 type MLBridge struct {
 	serviceURL string
 	httpClient *http.Client
 }
 
-// NewMLBridge creates a new ML bridge
 func NewMLBridge(serviceURL string) *MLBridge {
 	return &MLBridge{
 		serviceURL: serviceURL,
@@ -29,20 +27,17 @@ func NewMLBridge(serviceURL string) *MLBridge {
 	}
 }
 
-// GetServiceURL returns the ML service base URL
 func (b *MLBridge) GetServiceURL() string {
 	return b.serviceURL
 }
 
-// Predict calls the Python ML service for predictions
 func (b *MLBridge) Predict(ctx context.Context, req domain.PredictionRequest) (domain.PredictionResponse, error) {
-	// Prepare request body
 	body, err := json.Marshal(req)
 	if err != nil {
 		return domain.PredictionResponse{}, fmt.Errorf("ml_bridge: failed to marshal request: %w", err)
 	}
 
-	// Create HTTP request
+
 	url := fmt.Sprintf("%s/predict", b.serviceURL)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
@@ -50,7 +45,7 @@ func (b *MLBridge) Predict(ctx context.Context, req domain.PredictionRequest) (d
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
-	// Execute request
+
 	resp, err := b.httpClient.Do(httpReq)
 	if err != nil {
 		log.Printf("WARNING: ML service unreachable (%v), returning mock prediction", err)
@@ -63,7 +58,7 @@ func (b *MLBridge) Predict(ctx context.Context, req domain.PredictionRequest) (d
 		return b.getMockPrediction(req), nil
 	}
 
-	// Parse response (limit body to 5 MB to prevent DoS from misbehaving ML service)
+	// Limit response body to 5MB
 	var prediction domain.PredictionResponse
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 5*1024*1024)).Decode(&prediction); err != nil {
 		return domain.PredictionResponse{}, fmt.Errorf("ml_bridge: failed to decode response: %w", err)
@@ -72,7 +67,6 @@ func (b *MLBridge) Predict(ctx context.Context, req domain.PredictionRequest) (d
 	return prediction, nil
 }
 
-// GetStats fetches ML model stats from the Python service.
 func (b *MLBridge) GetStats(ctx context.Context) (map[string]interface{}, error) {
 	url := fmt.Sprintf("%s/stats", b.serviceURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -98,7 +92,6 @@ func (b *MLBridge) GetStats(ctx context.Context) (map[string]interface{}, error)
 	return result, nil
 }
 
-// GetAnalytics fetches analytics payload from the Python ML service.
 func (b *MLBridge) GetAnalytics(ctx context.Context, req domain.PredictionRequest) (map[string]interface{}, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -130,7 +123,6 @@ func (b *MLBridge) GetAnalytics(ctx context.Context, req domain.PredictionReques
 	return result, nil
 }
 
-// Health checks ML service connectivity
 func (b *MLBridge) Health(ctx context.Context) error {
 	url := fmt.Sprintf("%s/health", b.serviceURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -151,9 +143,7 @@ func (b *MLBridge) Health(ctx context.Context) error {
 	return nil
 }
 
-// getMockPrediction returns a fallback prediction
 func (b *MLBridge) getMockPrediction(req domain.PredictionRequest) domain.PredictionResponse {
-	// Simple mock logic based on date
 	month := time.Now().Month()
 	var aqi int
 	var traffic float64

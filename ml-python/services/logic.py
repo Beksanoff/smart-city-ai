@@ -1,12 +1,4 @@
-"""
-Prediction Logic Service — v2.0
-Enhanced with:
-- Real ML models (GradientBoosting + RandomForest) trained on 2234 days of Almaty data
-- Open-Meteo 3-day weather + AQI forecast (free, no key)
-- Live data context (current AQI / traffic from backend)
-- Hourly / time-of-day traffic patterns
-- Adaptive LLM prompt with full context
-"""
+
 
 import os
 import asyncio
@@ -26,10 +18,9 @@ LOCAL_TZ = ZoneInfo("Asia/Almaty")
 
 
 def local_now() -> datetime:
-    """Return current Almaty time as a naive datetime for local date math."""
     return datetime.now(LOCAL_TZ).replace(tzinfo=None)
 
-# Try to import groq, handle if not available
+
 try:
     from groq import Groq
     GROQ_AVAILABLE = True
@@ -39,27 +30,26 @@ except ImportError:
 
 
 class PredictionService:
-    """Service for generating urban condition predictions using ML models + LLM."""
+    """ML + LLM prediction service for Almaty urban conditions."""
 
     def __init__(self):
         self.data_path = Path(__file__).parent.parent / "data" / "almaty_history.csv"
         self.df = self._load_data()
         self.groq_client = self._init_groq()
 
-        # Precompute statistics from real data
+
         self.monthly_stats = self._compute_monthly_stats()
         self.correlations = self._compute_correlations()
         self.hourly_patterns = self._compute_hourly_patterns()
 
-        # Real ML models
+
         self.ml_model = SmartCityMLModel()
         self._init_ml_model()
 
-        # Open-Meteo forecast service
+
         self.forecast_service = ForecastService()
 
     def _init_ml_model(self):
-        """Try loading saved models, otherwise train from scratch."""
         if self.ml_model.load_models():
             logger.info("Loaded pre-trained ML models from disk")
         elif self.df is not None and not self.df.empty:
@@ -77,7 +67,6 @@ class PredictionService:
             logger.warning("No data available for ML training")
 
     def _load_data(self) -> Optional[pd.DataFrame]:
-        """Load historical CSV data"""
         try:
             if self.data_path.exists():
                 df = pd.read_csv(self.data_path, parse_dates=["date"])
@@ -91,7 +80,6 @@ class PredictionService:
             return None
 
     def _init_groq(self) -> Optional[Any]:
-        """Initialize Groq client"""
         api_key = os.getenv("GROQ_API_KEY")
         if api_key and GROQ_AVAILABLE:
             try:
@@ -350,7 +338,7 @@ class PredictionService:
         lang = (language or "ru").lower()[:2]  # normalize: "ru", "en", "kk"
         now = local_now()
 
-        # Parse target date
+
         if date:
             try:
                 target_date = datetime.strptime(date, "%Y-%m-%d")
@@ -399,7 +387,7 @@ class PredictionService:
                 ml_result=numeric["ml_result"],
                 language=lang,
             )
-            # _get_groq_prediction_v2 returns None on Groq failure
+
             if groq_text is not None:
                 prediction_text = groq_text
             else:
@@ -407,7 +395,7 @@ class PredictionService:
         else:
             prediction_text = numeric["base_insight"]
 
-        # Clarify statistical traffic basis in non-LLM responses.
+
         if prediction_text == numeric["base_insight"] and numeric["has_history_data"] and stats:
             period = self._history_period_label()
             if lang == "en":
@@ -422,7 +410,7 @@ class PredictionService:
                 )
             prediction_text = f"{prediction_text} {basis_note}"
 
-        # `is_mock` should indicate data provenance, not LLM availability.
+
         is_mock = not numeric["has_history_data"]
 
         return {
@@ -566,7 +554,7 @@ class PredictionService:
         n = stats["records"]
         confidence = min(0.92, 0.55 + 0.002 * n)
 
-        # Temperature→AQI linear regression from data
+
         if temperature is not None and self.df is not None:
             m_data = self.df[self.df["month"] == month]
             if len(m_data) > 10:
@@ -579,7 +567,7 @@ class PredictionService:
                     base_aqi += slope * temp_diff
                     confidence += 0.03
 
-        # Weekend traffic ratio from data
+
         if is_weekend and self.df is not None:
             weekend_data = self.df[(self.df["month"] == month) & self.df["is_weekend"]]
             weekday_data = self.df[(self.df["month"] == month) & ~self.df["is_weekend"]]
@@ -629,7 +617,7 @@ class PredictionService:
 
     # ── Enhanced Groq v3 prompt (multilingual) ────────────────────────────
 
-    # Localized strings for prompt construction
+
     _L = {
         "ru": {
             "role": "AI-диспетчер умного города Алматы",
@@ -760,7 +748,7 @@ class PredictionService:
             is_future = target_date.date() > now.date()
             is_tomorrow = (target_date.date() - now.date()).days == 1
 
-            # Date relationship label
+
             if is_tomorrow:
                 date_tag = L["tomorrow"]
             elif is_future:
@@ -768,7 +756,7 @@ class PredictionService:
             else:
                 date_tag = L["today"]
 
-            # Time-of-day context
+
             if hour < 7:
                 time_period = L["time_night"]
             elif hour < 10:
@@ -780,7 +768,7 @@ class PredictionService:
             else:
                 time_period = L["time_late"]
 
-            # Live data context
+
             live_ctx = ""
             if live_aqi is not None or live_traffic is not None:
                 parts = []
@@ -790,7 +778,7 @@ class PredictionService:
                     parts.append(f"{L['traffic_now']}: {live_traffic}%")
                 live_ctx = f"\n🔴 {L['live']}: {', '.join(parts)}"
 
-            # Historical data context
+
             hist_ctx = ""
             if stats:
                 hist_ctx = f"""
@@ -802,7 +790,7 @@ class PredictionService:
 - PM2.5: {stats.get('pm25_mean', '?')} ug/m3
 - {L['humidity']}: {stats.get('humidity_mean', '?')}%"""
 
-            # Hourly traffic patterns
+
             traffic_patterns = ""
             if self.hourly_patterns:
                 is_wknd = target_date.weekday() >= 5
@@ -817,13 +805,13 @@ class PredictionService:
 - {L['evening']}: ~{p.get('evening_16_20', '?')}%
 - {L['night']}: ~{p.get('night_20_7', '?')}%"""
 
-            # ML model info
+
             ml_ctx = f"\n🤖 {L['method']}: {ml_method}"
             if ml_result and "pm25_prediction" in ml_result:
                 ml_ctx += (f"\n   PM2.5 (ML): {ml_result['pm25_prediction']}"
                            f" ug/m3 -> AQI (EPA): {ml_result['aqi_prediction']}")
 
-            # Correlation context
+
             corr_ctx = ""
             temp_aqi = self.correlations.get("temperature_vs_aqi")
             if temp_aqi is not None:
@@ -831,13 +819,13 @@ class PredictionService:
                 corr_ctx = (f"\n📈 {L['temp_label']}<->AQI correlation:"
                             f" {temp_aqi:.3f} ({direction})")
 
-            # Build rules
+
             rules_list = [L["lang_rule"]] + L["rules"]
             future_rule = L["rule_future"] if is_future else L["rule_today"]
             rules_list.insert(2, future_rule)
             rules_text = "\n".join(f"{i+1}. {r}" for i, r in enumerate(rules_list))
 
-            # ── SYSTEM PROMPT ──
+
             system_prompt = f"""{L['role']}. {L['goal']}.
 
 CONTEXT:
@@ -848,7 +836,7 @@ CONTEXT:
 RULES:
 {rules_text}"""
 
-            # ── USER PROMPT ──
+
             user_prompt = f"""DATA:
 🌡️ {L['temp_label']}: {temp_str}
 🏭 AQI forecast: {aqi} ({self._aqi_category(aqi, language)})
@@ -873,17 +861,17 @@ RULES:
                 ],
                 max_tokens=500,
                 temperature=0.6,
-                timeout=25,  # seconds; Go upstream timeout is 30s
+                timeout=25,  # Go upstream timeout is 30s
             )
 
             text = response.choices[0].message.content.strip()
-            # Detect truncated output and append ellipsis
+
             if response.choices[0].finish_reason == "length" and not text.endswith((".", "!", "?")):
                 text += "…"
             return text
         except Exception as e:
             logger.error(f"Groq API error: {type(e).__name__}: {e}")
-            return None  # caller checks None → sets is_mock=True
+            return None
 
     # ── Helper methods ─────────────────────────────────────────────────
 
@@ -985,7 +973,6 @@ RULES:
         method: str, ml_result: Optional[Dict],
         lang: str = "ru",
     ) -> str:
-        """Enhanced reasoning with ML model info (multilingual)."""
         R = self._REASON.get(lang, self._REASON["ru"])
         reasons = []
         stats = self.monthly_stats.get(month, {})
@@ -1026,7 +1013,6 @@ RULES:
         return ". ".join(reasons) + "."
 
     def _build_monthly_overview(self) -> List[Dict[str, Any]]:
-        """Aggregate historical monthly analytics directly from the CSV dataset."""
         if self.df is None or self.df.empty:
             return []
 
@@ -1058,7 +1044,6 @@ RULES:
 
     @staticmethod
     def _compute_risk_score(aqi: int, traffic: float) -> float:
-        """Blend AQI and traffic into a single 0-100 urban risk score."""
         aqi_component = min(60.0, (max(0, aqi) / 150.0) * 60.0)
         traffic_component = min(40.0, (max(0.0, traffic) / 80.0) * 40.0)
         return round(min(100.0, aqi_component + traffic_component), 1)
@@ -1069,7 +1054,6 @@ RULES:
         live_traffic: Optional[float] = None,
         live_temp: Optional[float] = None,
     ) -> Dict[str, Any]:
-        """Build analytics payload from historical CSV data and forecast-driven predictions."""
         forecast = await self.forecast_service.get_forecast()
         monthly_overview = self._build_monthly_overview()
 
@@ -1130,7 +1114,6 @@ RULES:
     # ── Stats endpoint ─────────────────────────────────────────────────
 
     def get_data_stats(self) -> Dict[str, Any]:
-        """Get comprehensive statistics including ML model metrics."""
         if self.df is None:
             return {"error": "No data available"}
 
@@ -1165,7 +1148,7 @@ RULES:
             "hourly_patterns": self.hourly_patterns,
         }
 
-        # Add ML model info
+
         result["ml_model"] = self.ml_model.get_info()
 
         return result

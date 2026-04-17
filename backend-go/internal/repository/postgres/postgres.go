@@ -9,17 +9,14 @@ import (
 	"github.com/smartcity/backend/internal/domain"
 )
 
-// PostgresRepository implements domain.DataRepository
 type PostgresRepository struct {
 	pool *pgxpool.Pool
 }
 
-// NewPostgresRepository creates a new PostgreSQL repository
 func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
 	return &PostgresRepository{pool: pool}
 }
 
-// SaveWeatherData persists weather data to PostgreSQL
 func (r *PostgresRepository) SaveWeatherData(ctx context.Context, data domain.Weather) error {
 	query := `
 		INSERT INTO weather_data (
@@ -39,7 +36,6 @@ func (r *PostgresRepository) SaveWeatherData(ctx context.Context, data domain.We
 	return nil
 }
 
-// SaveTrafficData persists traffic data to PostgreSQL
 func (r *PostgresRepository) SaveTrafficData(ctx context.Context, data domain.Traffic) error {
 	query := `
 		INSERT INTO traffic_data (
@@ -59,7 +55,6 @@ func (r *PostgresRepository) SaveTrafficData(ctx context.Context, data domain.Tr
 	return nil
 }
 
-// GetHistoricalWeather retrieves weather history from PostgreSQL
 func (r *PostgresRepository) GetHistoricalWeather(ctx context.Context, from, to time.Time) ([]domain.Weather, error) {
 	query := `
 		SELECT temperature, feels_like, humidity, description, icon,
@@ -96,7 +91,6 @@ func (r *PostgresRepository) GetHistoricalWeather(ctx context.Context, from, to 
 	return results, nil
 }
 
-// GetHistoricalTraffic retrieves traffic history from PostgreSQL
 func (r *PostgresRepository) GetHistoricalTraffic(ctx context.Context, from, to time.Time) ([]domain.Traffic, error) {
 	query := `
 		SELECT congestion_index, congestion_level, average_speed, free_flow_speed,
@@ -133,7 +127,6 @@ func (r *PostgresRepository) GetHistoricalTraffic(ctx context.Context, from, to 
 	return results, nil
 }
 
-// Health checks database connectivity
 func (r *PostgresRepository) Health(ctx context.Context) error {
 	if err := r.pool.Ping(ctx); err != nil {
 		return fmt.Errorf("postgres: health check failed: %w", err)
@@ -141,7 +134,6 @@ func (r *PostgresRepository) Health(ctx context.Context) error {
 	return nil
 }
 
-// SavePredictionLog persists a prediction request/response to PostgreSQL
 func (r *PostgresRepository) SavePredictionLog(ctx context.Context, req domain.PredictionRequest, resp domain.PredictionResponse) error {
 	query := `
 		INSERT INTO prediction_logs (
@@ -150,7 +142,7 @@ func (r *PostgresRepository) SavePredictionLog(ctx context.Context, req domain.P
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	`
 
-	// Handle empty date — use nil instead of empty string for nullable DATE column
+	// nil instead of empty string for nullable DATE column
 	var date interface{}
 	if req.Date != "" {
 		date = req.Date

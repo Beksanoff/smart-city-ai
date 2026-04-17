@@ -23,15 +23,15 @@ import (
 )
 
 func main() {
-	// Load environment variables
+
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found, using system environment")
 	}
 
-	// Configuration
+
 	cfg := loadConfig()
 
-	// Database connection
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -45,7 +45,7 @@ func main() {
 		log.Println("Connected to PostgreSQL")
 	}
 
-	// Dependency Injection: Repositories
+
 	var dataRepo service.DataRepository
 	if pool != nil {
 		dataRepo = postgres.NewPostgresRepository(pool)
@@ -53,23 +53,23 @@ func main() {
 		dataRepo = postgres.NewMockRepository()
 	}
 
-	// Dependency Injection: Services
+
 	weatherSvc := service.NewWeatherService(cfg.OpenWeatherAPIKey)
 	trafficSvc := service.NewTrafficService(cfg.TomTomAPIKey)
 	mlBridge := service.NewMLBridge(cfg.MLServiceURL)
 	dashboardSvc := service.NewDashboardService(weatherSvc, trafficSvc, dataRepo)
 
-	// Fiber App
+
 	app := fiber.New(fiber.Config{
 		AppName:      "SmartCity API v1.0",
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
-		IdleTimeout:  30 * time.Second, // Prevent slowloris: close idle keep-alive connections
-		BodyLimit:    1 * 1024 * 1024,  // 1 MB max request body
+		IdleTimeout:  30 * time.Second,
+		BodyLimit:    1 * 1024 * 1024,
 		ErrorHandler: customErrorHandler,
 	})
 
-	// Middleware
+
 	app.Use(recover.New())
 	app.Use(compress.New(compress.Config{
 		Level: compress.LevelBestSpeed,
@@ -88,10 +88,10 @@ func main() {
 		AllowHeaders: "Origin,Content-Type,Accept,Authorization",
 	}))
 
-	// Routes
+
 	http.SetupRoutes(app, dashboardSvc, mlBridge, dataRepo)
 
-	// Graceful shutdown
+
 	go func() {
 		port := cfg.Port
 		if port == "" {
@@ -103,7 +103,7 @@ func main() {
 		}
 	}()
 
-	// Wait for interrupt signal
+
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
@@ -113,7 +113,7 @@ func main() {
 		log.Printf("Server forced to shutdown: %v", err)
 	}
 
-	// Wait for background goroutines (DB writes) to finish
+
 	dashboardSvc.WaitBackground()
 
 	log.Println("Server exited gracefully")
@@ -138,7 +138,7 @@ func loadConfig() *Config {
 		Env:               getEnv("GO_ENV", "development"),
 	}
 
-	// Warn about missing configuration at startup
+
 	if cfg.DatabaseURL == "" {
 		log.Println("WARNING: DATABASE_URL not set — using mock repository")
 	}
@@ -165,7 +165,7 @@ func customErrorHandler(c *fiber.Ctx, err error) error {
 
 	if e, ok := err.(*fiber.Error); ok {
 		code = e.Code
-		// Only expose error messages for client errors (4xx), not server errors
+		// Expose error messages only for client errors (4xx)
 		if code >= 400 && code < 500 {
 			message = e.Message
 		}

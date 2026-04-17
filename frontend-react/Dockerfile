@@ -12,8 +12,7 @@ ENV VITE_YANDEX_MAPS_API_KEY=${VITE_YANDEX_MAPS_API_KEY}
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies (use npm ci for deterministic builds if lockfile exists)
-RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
+RUN npm install
 
 # Copy source code
 COPY . .

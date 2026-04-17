@@ -11,17 +11,14 @@ import (
 	"github.com/smartcity/backend/internal/service"
 )
 
-// Pre-compiled regex for date validation (avoid re-compiling on every request)
 var dateRegex = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 
-// Handler contains all HTTP handlers
 type Handler struct {
 	dashboardSvc *service.DashboardService
 	mlBridge     *service.MLBridge
 	repo         service.DataRepository
 }
 
-// NewHandler creates a new handler
 func NewHandler(dashboardSvc *service.DashboardService, mlBridge *service.MLBridge, repo service.DataRepository) *Handler {
 	return &Handler{
 		dashboardSvc: dashboardSvc,
@@ -30,9 +27,7 @@ func NewHandler(dashboardSvc *service.DashboardService, mlBridge *service.MLBrid
 	}
 }
 
-// HealthCheck returns service health status
 func (h *Handler) HealthCheck(c *fiber.Ctx) error {
-	// Verify database connectivity
 	dbStatus := "ok"
 	if err := h.repo.Health(c.Context()); err != nil {
 		dbStatus = "degraded"
@@ -46,7 +41,6 @@ func (h *Handler) HealthCheck(c *fiber.Ctx) error {
 	})
 }
 
-// GetDashboard returns aggregated live data
 func (h *Handler) GetDashboard(c *fiber.Ctx) error {
 	ctx := c.Context()
 
@@ -61,7 +55,6 @@ func (h *Handler) GetDashboard(c *fiber.Ctx) error {
 	})
 }
 
-// GetWeather returns current weather data
 func (h *Handler) GetWeather(c *fiber.Ctx) error {
 	ctx := c.Context()
 
@@ -76,7 +69,6 @@ func (h *Handler) GetWeather(c *fiber.Ctx) error {
 	})
 }
 
-// GetTraffic returns current traffic data with heatmap
 func (h *Handler) GetTraffic(c *fiber.Ctx) error {
 	ctx := c.Context()
 
@@ -91,7 +83,6 @@ func (h *Handler) GetTraffic(c *fiber.Ctx) error {
 	})
 }
 
-// Predict proxies prediction requests to Python ML service
 func (h *Handler) Predict(c *fiber.Ctx) error {
 	ctx := c.Context()
 
@@ -100,7 +91,7 @@ func (h *Handler) Predict(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
 	}
 
-	// Validation: use pointer/flag to distinguish 0°C from "not provided"
+
 	if req.Query != "" && len(req.Query) > 1000 {
 		return fiber.NewError(fiber.StatusBadRequest, "Query too long (max 1000 characters)")
 	}
@@ -108,7 +99,7 @@ func (h *Handler) Predict(c *fiber.Ctx) error {
 		if !dateRegex.MatchString(req.Date) {
 			return fiber.NewError(fiber.StatusBadRequest, "Date must be in YYYY-MM-DD format")
 		}
-		// Verify it's a real date (e.g. reject 2025-02-30)
+
 		if _, err := time.Parse("2006-01-02", req.Date); err != nil {
 			return fiber.NewError(fiber.StatusBadRequest, "Invalid date value")
 		}
@@ -125,7 +116,7 @@ func (h *Handler) Predict(c *fiber.Ctx) error {
 		}
 	}
 
-	// Enrich request with live data from dashboard (weather + traffic)
+	// Enrich with live data
 	dashData, dashErr := h.dashboardSvc.GetDashboardData(ctx)
 	if dashErr == nil {
 		aqi := dashData.Weather.AQI
@@ -143,7 +134,7 @@ func (h *Handler) Predict(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to get prediction")
 	}
 
-	// Log prediction to database asynchronously (tracked for graceful shutdown)
+	// Async persist to DB
 	h.dashboardSvc.TrackBackground(func() {
 		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -158,7 +149,6 @@ func (h *Handler) Predict(c *fiber.Ctx) error {
 	})
 }
 
-// GetStats proxies ML stats request to Python ML service via MLBridge
 func (h *Handler) GetStats(c *fiber.Ctx) error {
 	result, err := h.mlBridge.GetStats(c.Context())
 	if err != nil {
@@ -169,7 +159,6 @@ func (h *Handler) GetStats(c *fiber.Ctx) error {
 	return c.JSON(result)
 }
 
-// GetAnalytics proxies analytics request to Python ML service via MLBridge
 func (h *Handler) GetAnalytics(c *fiber.Ctx) error {
 	ctx := c.Context()
 	req := domain.PredictionRequest{}
@@ -195,12 +184,10 @@ func (h *Handler) GetAnalytics(c *fiber.Ctx) error {
 	return c.JSON(result)
 }
 
-// GetHistoricalWeather returns weather history within a time range
 func (h *Handler) GetHistoricalWeather(c *fiber.Ctx) error {
 	ctx := c.Context()
-
 	hours := c.QueryInt("hours", 24)
-	if hours < 1 || hours > 720 { // max 30 days
+	if hours < 1 || hours > 720 {
 		hours = 24
 	}
 
@@ -219,7 +206,6 @@ func (h *Handler) GetHistoricalWeather(c *fiber.Ctx) error {
 	})
 }
 
-// GetHistoricalTraffic returns traffic history within a time range
 func (h *Handler) GetHistoricalTraffic(c *fiber.Ctx) error {
 	ctx := c.Context()
 

@@ -1,18 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-ML Model Service -- v4 (production-ready)
 
-Pipeline:
-  1. PM2.5 Model (GradientBoosting): meteo features -> PM2.5 concentration
-  2. AQI: deterministic US EPA formula from predicted PM2.5
-  3. Traffic Model (RandomForest): calendar + meteo -> traffic index
-
-Safeguards:
-  - TimeSeriesSplit for cross-validation (no temporal leakage)
-  - Graceful degradation when lag features unavailable (multi-day forecasts)
-  - Seasonal MAE diagnostics (winter vs summer imbalance)
-  - Feature importance audit (synthetic data flag)
-"""
 
 import logging
 import hashlib
@@ -26,7 +13,7 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-# Try importing scikit-learn
+
 try:
     from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
     from sklearn.model_selection import TimeSeriesSplit, cross_val_score
@@ -39,17 +26,12 @@ except ImportError:
     logger.warning("scikit-learn not available -- ML models disabled, using statistical fallback")
 
 
+# PM2.5 -> US EPA AQI (2024 revised breakpoints)
 def pm25_to_aqi(pm25: float) -> int:
-    """Convert PM2.5 (ug/m3) to US EPA AQI.
-
-    Uses the February 2024 revised breakpoints (88 FR 5558).
-    Key change: "Good" category lowered from 12.0 to 9.0 ug/m3.
-    """
     if pm25 < 0 or np.isnan(pm25):
         return 0
-    # Truncate to 1 decimal place per EPA standard (avoid gap at 9.0-9.1)
     pm25 = math.floor(pm25 * 10) / 10
-    # 2024 revised breakpoints (88 FR 5558, effective Feb 7 2024)
+    # 2024 revised breakpoints (88 FR 5558)
     breakpoints = [
         (0.0, 9.0, 0, 50),
         (9.1, 35.4, 51, 100),
@@ -83,17 +65,16 @@ class SmartCityMLModel:
     METRICS_PATH = MODEL_DIR / "metrics.pkl"
     HASH_PATH = MODEL_DIR / "checksums.txt"
 
-    # Feature columns -- ONLY meteorological + calendar + lags
-    # NO pollutant concentrations (pm25/pm10/no2/so2/ozone) -- they are targets!
+    # Feature columns: meteo + calendar + lags (no pollutant concentrations)
     FEATURE_COLS = [
         "temperature", "humidity", "wind_speed", "precipitation",
         "month", "day_of_week", "is_weekend_int",
-        # Engineered
+
         "temp_squared", "temp_wind_interaction",
         "is_winter", "is_summer", "is_heating_season",
-        # Lag features (previous day values)
+
         "pm25_lag1", "traffic_lag1", "temp_lag1",
-        # Rolling averages (7-day trend)
+
         "pm25_rolling7", "traffic_rolling7", "temp_rolling7",
     ]
 
@@ -108,21 +89,16 @@ class SmartCityMLModel:
         self.seasonal_diagnostics: Dict[str, Any] = {}
 
     def train(self, df: pd.DataFrame) -> Dict[str, Any]:
-        """
-        Train GradientBoosting (PM2.5) and RandomForest (Traffic) models.
-        Returns training metrics.
-        """
         if not SKLEARN_AVAILABLE:
             logger.warning("scikit-learn not installed -- skipping model training")
             return {"error": "scikit-learn not available"}
 
         logger.info(f"Starting ML model training on {len(df)} records...")
 
-        # Feature engineering
+
         df_feat = self._engineer_features(df)
 
-        # Exclude rows with interpolated PM2.5 from PM2.5 model training
-        # (keep them for traffic model which doesn't use PM2.5 as target)
+        # Exclude interpolated PM2.5 from PM2.5 model training
         if "is_interpolated" in df_feat.columns:
             n_interp = df_feat["is_interpolated"].sum()
             logger.info(f"Excluding {n_interp} interpolated PM2.5 rows from PM2.5 training")
@@ -130,7 +106,7 @@ class SmartCityMLModel:
         else:
             df_pm25_train = df_feat.copy()
 
-        # Drop rows with NaN (from lag features)
+
         df_feat = df_feat.dropna(subset=self.FEATURE_COLS + ["pm25", "traffic_index"])
         df_pm25_train = df_pm25_train.dropna(subset=self.FEATURE_COLS + ["pm25", "traffic_index"])
         logger.info(f"Training samples after feature engineering: {len(df_feat)} (PM2.5: {len(df_pm25_train)})")
@@ -139,15 +115,15 @@ class SmartCityMLModel:
             logger.error("Not enough data for training (need >= 100 rows)")
             return {"error": "Insufficient data"}
 
-        # --- PM2.5 training data (excludes interpolated rows) ---
+
         X_pm25 = df_pm25_train[self.FEATURE_COLS].values
         y_pm25_all = df_pm25_train["pm25"].values
 
-        # --- Traffic training data (all rows, synthetic target) ---
+
         X_traffic_all = df_feat[self.FEATURE_COLS].values
         y_traffic_all = df_feat["traffic_index"].values
 
-        # Train/test split (80/20, time-ordered) -- BEFORE scaling to avoid data snooping
+        # Time-ordered split (80/20) before scaling to prevent data snooping
         split_pm25 = int(len(X_pm25) * 0.8)
         split_traffic = int(len(X_traffic_all) * 0.8)
 
@@ -157,10 +133,7 @@ class SmartCityMLModel:
         X_traffic_train_raw, X_traffic_test_raw = X_traffic_all[:split_traffic], X_traffic_all[split_traffic:]
         y_traffic_train, y_traffic_test = y_traffic_all[:split_traffic], y_traffic_all[split_traffic:]
 
-        # Scale features -- separate scalers per model, fit ONLY on training data (no data snooping)
-        # Each model may have different feature distributions (PM2.5 training excludes
-        # interpolated rows), so fitting a single scaler on one subset and applying it
-        # to the other would distort the feature space.
+        # Separate scalers per model — each has different feature distributions
         self.pm25_scaler = StandardScaler()
         X_pm25_train = self.pm25_scaler.fit_transform(X_pm25_train_raw)
         X_pm25_test = self.pm25_scaler.transform(X_pm25_test_raw)
@@ -169,7 +142,7 @@ class SmartCityMLModel:
         X_traffic_train = self.traffic_scaler.fit_transform(X_traffic_train_raw)
         X_traffic_test = self.traffic_scaler.transform(X_traffic_test_raw)
 
-        # --- PM2.5 Model (GradientBoosting -- meteo -> PM2.5 concentration) ---
+
         self.pm25_model = GradientBoostingRegressor(
             n_estimators=300,
             max_depth=5,
@@ -182,13 +155,11 @@ class SmartCityMLModel:
         self.pm25_model.fit(X_pm25_train, y_pm25_train)
         pm25_pred = self.pm25_model.predict(X_pm25_test)
 
-        # Also evaluate AQI via deterministic formula
+
         aqi_true = np.array([pm25_to_aqi(v) for v in y_pm25_test])
         aqi_pred = np.array([pm25_to_aqi(v) for v in pm25_pred])
 
-        # --- Traffic Model (RandomForest -- calendar + meteo -> traffic) ---
-        # WARNING: traffic_index is fully synthetic (rule-based + Gaussian noise).
-        # R² and MAE for traffic measure fit to synthetic patterns, NOT real traffic.
+        # Traffic model — WARNING: traffic_index is fully synthetic
         self.traffic_model = RandomForestRegressor(
             n_estimators=200,
             max_depth=8,
@@ -200,7 +171,7 @@ class SmartCityMLModel:
         self.traffic_model.fit(X_traffic_train, y_traffic_train)
         traffic_pred = self.traffic_model.predict(X_traffic_test)
 
-        # Compute metrics
+
         self.metrics = {
             "pm25": {
                 "mae": round(float(mean_absolute_error(y_pm25_test, pm25_pred)), 2),
@@ -231,7 +202,7 @@ class SmartCityMLModel:
             "feature_names": self.FEATURE_COLS,
         }
 
-        # Feature importance
+
         self.feature_importance = {
             "pm25": dict(zip(
                 self.FEATURE_COLS,
@@ -246,8 +217,7 @@ class SmartCityMLModel:
 
         self.is_trained = True
 
-        # -- TimeSeriesSplit CV (no temporal leakage) --
-        # Use Pipeline(scaler+model) so each CV fold fits scaler only on its train portion
+        # TimeSeriesSplit CV — Pipeline prevents data leakage in folds
         tscv = TimeSeriesSplit(n_splits=5)
         pm25_pipe = Pipeline([
             ("scaler", StandardScaler()),
@@ -263,7 +233,7 @@ class SmartCityMLModel:
                 min_samples_leaf=5, random_state=42, n_jobs=-1,
             )),
         ])
-        # CV on clean PM2.5 data only (no interpolated rows)
+
         cv_pm25 = cross_val_score(pm25_pipe, X_pm25, y_pm25_all, cv=tscv, scoring="r2")
         cv_traffic = cross_val_score(traffic_pipe, X_traffic_all, y_traffic_all, cv=tscv, scoring="r2")
         self.metrics["pm25"]["cv_r2_mean"] = round(float(cv_pm25.mean()), 4)
@@ -274,17 +244,17 @@ class SmartCityMLModel:
         self.metrics["traffic"]["cv_r2_folds"] = [round(float(v), 4) for v in cv_traffic]
         self.metrics["cv_method"] = "TimeSeriesSplit(n_splits=5)"
 
-        # -- Seasonal MAE diagnostics (PM2.5 only, on clean test data) --
+
         df_pm25_test_slice = df_pm25_train.iloc[split_pm25:].copy()
         self.seasonal_diagnostics = self._compute_seasonal_diagnostics(
             df_pm25_test_slice, pm25_pred, None
         )
         self.metrics["seasonal_diagnostics"] = self.seasonal_diagnostics
 
-        # -- Feature importance audit (synthetic data warning) --
+
         self._audit_feature_importance()
 
-        # Save models to disk
+
         self._save_models()
 
         logger.info(
@@ -313,18 +283,10 @@ class SmartCityMLModel:
         avg_temp_7d: float = 0.0,
         lag_features_known: bool = False,
     ) -> Dict[str, Any]:
-        """
-        Predict PM2.5 (ML) -> AQI (formula) and traffic (ML).
-        No pollutant inputs required -- only weather + calendar + lags.
-
-        Args:
-            lag_features_known: explicit flag from caller indicating whether
-                lag/rolling features come from real data (True) or fallback (False).
-        """
         if not self.is_trained or not SKLEARN_AVAILABLE:
             return {"error": "Model not trained"}
 
-        # ── Input validation (clamp to physically plausible ranges) ──
+
         temperature = max(-50.0, min(60.0, temperature))
         humidity = max(0.0, min(100.0, humidity))
         wind_speed = max(0.0, min(80.0, wind_speed))
@@ -358,11 +320,11 @@ class SmartCityMLModel:
         pm25_pred = float(self.pm25_model.predict(X_pm25)[0])
         traffic_pred = float(self.traffic_model.predict(X_traffic)[0])
 
-        # Clamp PM2.5 to valid range
+
         pm25_pred = max(0, min(500, pm25_pred))
         traffic_pred = max(0, min(100, traffic_pred))
 
-        # Deterministic AQI from predicted PM2.5
+
         aqi_pred = pm25_to_aqi(pm25_pred)
 
         return {
@@ -375,13 +337,10 @@ class SmartCityMLModel:
         }
 
     def _engineer_features(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Create engineered features from raw data."""
         df = df.copy()
         df = df.sort_values("date").reset_index(drop=True)
 
-        # Mark interpolated PM2.5 rows (2020-01-01 to 2020-04-08)
-        # These were filled via seasonal interpolation in enrich_csv_openaq.py
-        # and should be excluded from PM2.5 model training
+        # Flag interpolated PM2.5 rows (pre-OpenAQ, before 2020-04-09)
         if "is_interpolated" not in df.columns:
             openaq_start = pd.Timestamp("2020-04-09")
             df["is_interpolated"] = df["date"] < openaq_start
@@ -389,37 +348,34 @@ class SmartCityMLModel:
             if n_interp > 0:
                 logger.info(f"Flagged {n_interp} rows as interpolated PM2.5 (before {openaq_start.date()})")
 
-        # Basic transformations
+
         df["is_weekend_int"] = df["is_weekend"].astype(int)
         df["temp_squared"] = df["temperature"] ** 2
         df["temp_wind_interaction"] = df["temperature"] * df["wind_speed"]
 
-        # Season flags
+
         df["is_winter"] = df["month"].isin([12, 1, 2]).astype(int)
         df["is_summer"] = df["month"].isin([6, 7, 8]).astype(int)
         df["is_heating_season"] = df["month"].isin([10, 11, 12, 1, 2, 3]).astype(int)
 
-        # Fill pollutant columns (needed for lag features)
+
         for col in ["pm25", "pm10", "no2", "so2", "ozone"]:
             if col in df.columns:
                 df[col] = df[col].fillna(df[col].median())
             else:
                 df[col] = 0
 
-        # Lag features (previous day) -- pm25_lag1 is LEGITIMATE for PM2.5 forecasting
+
         df["pm25_lag1"] = df["pm25"].shift(1)
         df["traffic_lag1"] = df["traffic_index"].shift(1)
         df["temp_lag1"] = df["temperature"].shift(1)
 
-        # Rolling averages (7-day window, shifted to exclude current day)
-        # IMPORTANT: shift(1) before rolling to avoid target leakage:
-        #   without shift: rolling([i-6..i]) includes target pm25[i]
-        #   with shift:    rolling([i-7..i-1]) uses only past values
+        # shift(1) before rolling to avoid target leakage
         df["pm25_rolling7"] = df["pm25"].shift(1).rolling(window=7, min_periods=1).mean()
         df["traffic_rolling7"] = df["traffic_index"].shift(1).rolling(window=7, min_periods=1).mean()
         df["temp_rolling7"] = df["temperature"].shift(1).rolling(window=7, min_periods=1).mean()
 
-        # Fill missing values in source columns
+
         for col in ["humidity", "wind_speed", "precipitation"]:
             if col in df.columns:
                 df[col] = df[col].fillna(df[col].median())
@@ -429,7 +385,6 @@ class SmartCityMLModel:
         return df
 
     def _build_feature_vector(self, **kwargs) -> list:
-        """Build a single feature vector matching FEATURE_COLS order (18 features)."""
         temp = kwargs["temperature"]
         wind = kwargs["wind_speed"]
         month = kwargs["month"]
@@ -459,7 +414,6 @@ class SmartCityMLModel:
         self, df_test: pd.DataFrame, pm25_pred: np.ndarray,
         traffic_pred: Optional[np.ndarray] = None,
     ) -> Dict[str, Any]:
-        """Compute MAE by season to detect imbalanced regression."""
         diagnostics = {}
         seasons = {
             "winter": [12, 1, 2],
@@ -484,7 +438,7 @@ class SmartCityMLModel:
                 entry["traffic_mae"] = round(float(mean_absolute_error(y_traffic_test[mask], traffic_pred[mask])), 2)
             diagnostics[name] = entry
 
-        # Log imbalance warnings
+
         winter = diagnostics.get("winter", {})
         summer = diagnostics.get("summer", {})
         if winter and summer:
@@ -500,11 +454,6 @@ class SmartCityMLModel:
         return diagnostics
 
     def _audit_feature_importance(self):
-        """Flag features that rely heavily on synthetic/interpolated data."""
-        # These lag features use pm25 which has real OpenAQ data (2020-2023)
-        # but pm10/no2/so2/ozone were interpolated for 946 days.
-        # Currently pm10/no2/so2/ozone are NOT in FEATURE_COLS, so no issue.
-        # But flag if lag features dominate (acceptable for time-series).
         pm25_imp = self.feature_importance.get("pm25", {})
         if not pm25_imp:
             return
@@ -539,7 +488,6 @@ class SmartCityMLModel:
             )
 
     def _estimate_confidence(self, temperature: float, month: int, lag_available: bool = True) -> float:
-        """Estimate prediction confidence based on training data and input quality."""
         base = 0.75
         if self.metrics.get("pm25", {}).get("r2", 0) > 0.5:
             base += 0.05
@@ -547,18 +495,16 @@ class SmartCityMLModel:
             base += 0.05
         if self.metrics.get("traffic", {}).get("r2", 0) > 0.5:
             base += 0.05
-        # Winter/summer have more data -> higher confidence
+
         if month in [1, 2, 7, 8, 12]:
             base += 0.03
-        # Penalty when lag features are fallback values (multi-day forecast)
+
         if not lag_available:
             base -= 0.10
             logger.debug("Confidence reduced: lag features unavailable")
         return max(0.40, min(0.95, base))
 
-    @staticmethod
     def _compute_file_hash(path: Path) -> str:
-        """Compute SHA-256 hash of a file for integrity verification."""
         h = hashlib.sha256()
         with open(path, "rb") as f:
             for chunk in iter(lambda: f.read(8192), b""):
@@ -566,7 +512,6 @@ class SmartCityMLModel:
         return h.hexdigest()
 
     def _save_models(self):
-        """Persist trained models to disk with integrity checksums."""
         self.MODEL_DIR.mkdir(parents=True, exist_ok=True)
         try:
             checksums = {}
@@ -581,7 +526,7 @@ class SmartCityMLModel:
                     pickle.dump(obj, f)
                 checksums[name] = self._compute_file_hash(path)
 
-            # Write checksums file
+
             with open(self.HASH_PATH, "w") as f:
                 for name, h in checksums.items():
                     f.write(f"{name}:{h}\n")
@@ -591,11 +536,10 @@ class SmartCityMLModel:
             logger.error(f"Failed to save models: {e}")
 
     def load_models(self) -> bool:
-        """Load pre-trained models from disk with integrity verification."""
         if not SKLEARN_AVAILABLE:
             return False
         try:
-            # Support both new (separate scalers) and old (single scaler) layouts
+
             has_separate_scalers = self.PM25_SCALER_PATH.exists() and self.TRAFFIC_SCALER_PATH.exists()
             has_legacy_scaler = self.SCALER_PATH.exists()
 
@@ -604,7 +548,7 @@ class SmartCityMLModel:
             if not has_separate_scalers and not has_legacy_scaler:
                 return False
 
-            # Verify checksums if available
+
             if self.HASH_PATH.exists():
                 expected = {}
                 for line in self.HASH_PATH.read_text().strip().split("\n"):
@@ -665,7 +609,6 @@ class SmartCityMLModel:
         return False
 
     def get_info(self) -> Dict[str, Any]:
-        """Return model info and metrics."""
         return {
             "is_trained": self.is_trained,
             "sklearn_available": SKLEARN_AVAILABLE,

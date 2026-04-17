@@ -1,11 +1,5 @@
-/**
- * API Service
- * Typed API calls to the Go backend
- */
-
 import axios, { AxiosInstance } from 'axios'
 
-// Types
 export interface Weather {
     temperature: number
     feels_like: number
@@ -37,10 +31,10 @@ export interface Incident {
 
 export interface RoadSegment {
     name: string
-    path: [number, number][]  // [[lon,lat], ...] GeoJSON order
-    congestion: number        // 0.0 (free) - 1.0 (blocked)
-    speed: number             // current speed km/h
-    free_flow: number         // free flow speed km/h
+    path: [number, number][]
+    congestion: number
+    speed: number
+    free_flow: number
 }
 
 export interface Traffic {
@@ -119,15 +113,32 @@ export interface AnalyticsData {
     correlations: Record<string, number>
 }
 
+export interface AnalyticsHourlyPattern {
+    morning_7_10: number
+    day_10_16: number
+    evening_16_20: number
+    night_20_7: number
+}
+
+export interface AnalyticsHourlyPatterns {
+    weekday?: AnalyticsHourlyPattern | null
+    weekend?: AnalyticsHourlyPattern | null
+}
+
+export interface StatsResponse {
+    success: boolean
+    data: {
+        hourly_patterns?: AnalyticsHourlyPatterns | null
+    }
+}
+
 export interface ApiResponse<T> {
     success: boolean
     data: T
     message?: string
 }
 
-// API Client
-// Always use same-origin API proxy (/api) in browser builds.
-// This avoids cross-origin/CSP issues and works on localhost and LAN devices.
+// Same-origin proxy — avoids CORS/CSP issues
 const API_BASE_URL = ''
 
 const apiClient: AxiosInstance = axios.create({
@@ -138,11 +149,7 @@ const apiClient: AxiosInstance = axios.create({
     },
 })
 
-// API Functions
 export const api = {
-    /**
-     * Get aggregated dashboard data (weather + traffic)
-     */
     getDashboard: async (): Promise<DashboardData> => {
         try {
             const response = await apiClient.get<ApiResponse<DashboardData>>('/api/v1/dashboard')
@@ -153,9 +160,6 @@ export const api = {
         }
     },
 
-    /**
-     * Get current weather
-     */
     getWeather: async (): Promise<Weather> => {
         try {
             const response = await apiClient.get<ApiResponse<Weather>>('/api/v1/weather')
@@ -166,9 +170,6 @@ export const api = {
         }
     },
 
-    /**
-     * Get current traffic with heatmap
-     */
     getTraffic: async (): Promise<Traffic> => {
         try {
             const response = await apiClient.get<ApiResponse<Traffic>>('/api/v1/traffic')
@@ -179,10 +180,7 @@ export const api = {
         }
     },
 
-    /**
-     * Get AI prediction
-     * Uses extended timeout (35s) because Go→Python→Groq LLM chain can take up to 30s.
-     */
+    // Extended timeout (35s) — Go→Python→Groq LLM chain can take up to 30s
     predict: async (request: PredictionRequest): Promise<PredictionResponse> => {
         try {
             const response = await apiClient.post<ApiResponse<PredictionResponse>>(
@@ -195,9 +193,6 @@ export const api = {
         }
     },
 
-    /**
-     * Health check
-     */
     healthCheck: async (): Promise<boolean> => {
         try {
             await apiClient.get('/health')
@@ -207,9 +202,6 @@ export const api = {
         }
     },
 
-    /**
-     * Get historical weather data
-     */
     getWeatherHistory: async (hours: number = 24): Promise<Weather[]> => {
         try {
             const response = await apiClient.get<{ success: boolean; data: Weather[]; count: number }>(
@@ -221,9 +213,6 @@ export const api = {
         }
     },
 
-    /**
-     * Get historical traffic data
-     */
     getTrafficHistory: async (hours: number = 24): Promise<Traffic[]> => {
         try {
             const response = await apiClient.get<{ success: boolean; data: Traffic[]; count: number }>(
@@ -235,21 +224,15 @@ export const api = {
         }
     },
 
-    /**
-     * Get ML stats (correlations, seasonal data)
-     */
-    getStats: async (): Promise<Record<string, unknown> | null> => {
+    getStats: async (): Promise<StatsResponse | null> => {
         try {
-            const response = await apiClient.get('/api/v1/stats')
+            const response = await apiClient.get<StatsResponse>('/api/v1/stats')
             return response.data
         } catch {
             return null
         }
     },
 
-    /**
-     * Get analytics built from historical CSV data and forecast-driven predictions
-     */
     getAnalytics: async (): Promise<AnalyticsData | null> => {
         try {
             const response = await apiClient.get<ApiResponse<AnalyticsData>>('/api/v1/analytics')
@@ -260,7 +243,6 @@ export const api = {
     },
 }
 
-// Mock data functions for development/demo
 function getMockWeather(): Weather {
     const month = new Date().getMonth() + 1
     const isWinter = month >= 12 || month <= 2
@@ -283,12 +265,11 @@ function getMockWeather(): Weather {
 }
 
 function getMockTraffic(): Traffic {
-    const hour = new Date().getHours() // Browser time is already local
+    const hour = new Date().getHours()
     const isRushHour = (hour >= 7 && hour <= 9) || (hour >= 17 && hour <= 19)
 
-    // Add jitter so it doesn't hang on a static value
     const baseCongestion = isRushHour ? 75 : 40
-    const jitter = Math.random() * 10 - 5 // symmetric [-5, +5)
+    const jitter = Math.random() * 10 - 5
     const congestionIndex = Math.min(100, Math.max(0, baseCongestion + jitter))
 
     return {
@@ -356,7 +337,7 @@ function generateMockRoadSegments(congestionIndex: number): RoadSegment[] {
             const t = i / (numPoints - 1)
             const lat = road.x1 + t * (road.x2 - road.x1)
             const lon = road.y1 + t * (road.y2 - road.y1)
-            path.push([lon, lat]) // GeoJSON order
+            path.push([lon, lat])
         }
         return {
             name: road.name,
@@ -368,7 +349,6 @@ function generateMockRoadSegments(congestionIndex: number): RoadSegment[] {
     })
 }
 
-// Major Almaty roads for mock data
 const ALMATY_ROADS = [
     { name: 'Al-Farabi Ave', x1: 43.2065, y1: 76.843, x2: 43.219, y2: 76.962 },
     { name: 'Abay Ave', x1: 43.238, y1: 76.845, x2: 43.2425, y2: 76.962 },

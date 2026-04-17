@@ -2,50 +2,33 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { Incident } from '../../services/api'
 
-/** Yandex traffic score payload sent via onTrafficScore callback */
 export interface YandexTrafficScore {
-    /** Yandex 0-10 score (0 = no data, 1-10 = congestion) */
     level: number
-    /** Estimated congestion index 0-100 derived from Yandex score */
     congestionIndex: number
-    /** Human-readable congestion level */
     congestionLevel: string
-    /** Estimated average speed km/h */
     averageSpeed: number
-    /** Free-flow baseline speed km/h */
     freeFlowSpeed: number
 }
 
 interface AlmatyMapProps {
-    roadSegments: unknown[] // kept for interface compat, Yandex shows its own traffic
+    roadSegments: unknown[]
     incidents?: Incident[]
-    /** Called when Yandex traffic score changes (real-time, every ~60s) */
     onTrafficScore?: (score: YandexTrafficScore) => void
 }
 
-// Координаты центра Алматы
-const ALMATY_CENTER: [number, number] = [43.2389, 76.8897] // [lat, lon] for Yandex
-
-// Yandex Maps API key (получить на developer.tech.yandex.ru)
+const ALMATY_CENTER: [number, number] = [43.2389, 76.8897]
 const YANDEX_API_KEY = (import.meta.env.VITE_YANDEX_MAPS_API_KEY || '').trim()
 
-// Global state: prevent multiple script loads
 let ymapsPromise: Promise<void> | null = null
 
-/**
- * Load Yandex Maps JS API v2.1 once, return a Promise that resolves when ymaps.ready() fires.
- */
 function loadYandexMaps(lang: string = 'ru'): Promise<void> {
-    // Map i18n codes to Yandex lang codes.
-    // Kazakh ('kk') falls back to Russian because Yandex Maps JS API v2.1
-    // does not support Kazakh as a UI language.
+    // Kazakh -> Russian fallback (Yandex Maps API v2.1 не поддерживает kk)
     const langMap: Record<string, string> = { ru: 'ru_RU', en: 'en_US', kk: 'ru_RU' }
     const ymLang = langMap[lang] || 'ru_RU'
 
     if (ymapsPromise) return ymapsPromise
 
     ymapsPromise = new Promise((resolve, reject) => {
-        // Already loaded (e.g. via index.html)
         if (window.ymaps) {
             window.ymaps.ready(resolve)
             return
@@ -93,7 +76,6 @@ function loadYandexMaps(lang: string = 'ru'): Promise<void> {
             script.onerror = () => {
                 script.remove()
                 if (withKey && YANDEX_API_KEY) {
-                    // Fallback for key/domain issues: retry without API key.
                     appendScript(false)
                     return
                 }
@@ -112,7 +94,6 @@ function loadYandexMaps(lang: string = 'ru'): Promise<void> {
     return ymapsPromise
 }
 
-/** Escape HTML to prevent XSS when strings are rendered via innerHTML (e.g. Yandex Maps balloons) */
 function escapeHtml(str: string): string {
     return str
         .replace(/&/g, '&amp;')
@@ -140,15 +121,7 @@ function getIncidentLabelKey(type: string): 'map.accident' | 'map.roadwork' | 'm
     }
 }
 
-/**
- * Convert Yandex 1-10 score to our traffic metrics.
- * Mapping:
- *   1-2  → Free Flow  (0-20%)
- *   3-4  → Light      (20-40%)
- *   5-6  → Moderate   (40-60%)
- *   7-8  → Heavy      (60-80%)
- *   9-10 → Severe     (80-100%)
- */
+// Yandex score (1-10) -> наши метрики трафика
 function yandexScoreToMetrics(level: number): YandexTrafficScore {
     const ALMATY_FREE_FLOW = 55 // km/h baseline
     const clamped = Math.max(0, Math.min(10, level))
@@ -181,12 +154,12 @@ function AlmatyMap({ incidents = [], onTrafficScore }: AlmatyMapProps) {
     const onTrafficScoreRef = useRef(onTrafficScore)
     onTrafficScoreRef.current = onTrafficScore
 
-    // Refs for cleanup (set inside async .then, cleaned in effect return)
+
     const cleanupRef = useRef<{ timer: ReturnType<typeof setTimeout> | null; provider: YMapsTrafficProvider | null; emitScore: (() => void) | null }>({
         timer: null, provider: null, emitScore: null,
     })
 
-    // Initialize Yandex Map
+
     useEffect(() => {
         let destroyed = false
 
@@ -203,19 +176,19 @@ function AlmatyMap({ incidents = [], onTrafficScore }: AlmatyMapProps) {
                     controls: ['zoomControl', 'geolocationControl'],
                     type: 'yandex#map',
                 }, {
-                    suppressMapOpenBlock: true, // hide "Open in Yandex Maps" popup
+                    suppressMapOpenBlock: true,
                 })
 
-                // --- Traffic layer (colored roads + incidents from Yandex) ---
+
                 const trafficControl = new ymaps.control.TrafficControl({
                     state: { providerKey: 'traffic#actual', trafficShown: true },
                 })
                 map.controls.add(trafficControl)
-                // Auto-show traffic
+
                 const provider = trafficControl.getProvider('traffic#actual')
                 provider.state.set('infoLayerShown', true)
 
-                // --- Extract real Yandex traffic score (1-10) ---
+
                 const emitScore = () => {
                     const level = provider.state.get('level')
                     if (level != null && typeof level === 'number' && level > 0) {
@@ -223,15 +196,15 @@ function AlmatyMap({ incidents = [], onTrafficScore }: AlmatyMapProps) {
                         onTrafficScoreRef.current?.(metrics)
                     }
                 }
-                // Listen for score changes (updates ~every 60s)
+                // Score updates ~60s
                 provider.state.events.add('change', emitScore)
-                // Also try to read initial value after a short delay
+
                 const timer = setTimeout(emitScore, 3000)
 
-                // Store references for cleanup
+
                 cleanupRef.current = { timer, provider, emitScore }
 
-                // Create a GeoObjectCollection for TomTom incidents overlay
+
                 const incidentsCollection = new ymaps.GeoObjectCollection()
                 map.geoObjects.add(incidentsCollection)
                 incidentsCollectionRef.current = incidentsCollection
@@ -247,11 +220,11 @@ function AlmatyMap({ incidents = [], onTrafficScore }: AlmatyMapProps) {
 
         return () => {
             destroyed = true
-            // Clear timer to prevent post-unmount callback
+
             if (cleanupRef.current.timer) {
                 clearTimeout(cleanupRef.current.timer)
             }
-            // Remove event listener to prevent memory leak
+
             if (cleanupRef.current.provider && cleanupRef.current.emitScore) {
                 try {
                     cleanupRef.current.provider.state.events.remove('change', cleanupRef.current.emitScore)
@@ -263,10 +236,10 @@ function AlmatyMap({ incidents = [], onTrafficScore }: AlmatyMapProps) {
                 mapRef.current = null
             }
         }
-        // eslint-disable-next-line react-hooks/exhaustive-deps -- map initializes once on mount; language/t changes don't require re-creating the map instance
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
 
-    // Update TomTom incident markers on the Yandex map
+
     const updateIncidents = useCallback(() => {
         if (!mapReady || !incidentsCollectionRef.current || !window.ymaps) return
 
@@ -298,7 +271,7 @@ function AlmatyMap({ incidents = [], onTrafficScore }: AlmatyMapProps) {
         updateIncidents()
     }, [updateIncidents])
 
-    // Error state
+
     if (loadError) {
         return (
             <div className="relative w-full h-full rounded-lg overflow-hidden flex items-center justify-center bg-cyber-dark">
@@ -314,7 +287,7 @@ function AlmatyMap({ incidents = [], onTrafficScore }: AlmatyMapProps) {
 
     return (
         <div className="relative w-full h-full rounded-lg overflow-hidden">
-            {/* Yandex Map container */}
+
             <div ref={containerRef} className="w-full h-full" role="img" aria-label={t('map.title')} />
 
             {!mapReady && !loadError && (
@@ -326,7 +299,7 @@ function AlmatyMap({ incidents = [], onTrafficScore }: AlmatyMapProps) {
                 </div>
             )}
 
-            {/* Заголовок карты */}
+
             <div className="absolute top-4 left-4 bg-cyber-dark/80 backdrop-blur-sm rounded-lg px-4 py-2 border border-cyber-border z-10 pointer-events-none">
                 <div className="flex items-center gap-2 text-sm">
                     <span className="w-2 h-2 rounded-full bg-cyber-cyan live-pulse shrink-0" />
@@ -369,7 +342,7 @@ function AlmatyMap({ incidents = [], onTrafficScore }: AlmatyMapProps) {
 
 export default AlmatyMap
 
-// Minimal Yandex Maps 2.1 typings (no @types/yandex-maps for v2.1)
+// Yandex Maps 2.1 typings
 interface YMapsMap { destroy(): void; geoObjects: { add(obj: unknown): void; remove(obj: unknown): void }; controls: { add(ctrl: unknown): void } }
 interface YMapsGeoObjectCollection { removeAll(): void; add(obj: unknown): void; getLength(): number }
 interface YMapsTrafficProvider { state: { get(key: string): unknown; set(key: string, value: unknown): void; events: { add(event: string, handler: () => void): void; remove(event: string, handler: () => void): void } } }

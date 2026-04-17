@@ -13,7 +13,9 @@
     "dependencies": {
         "@tanstack/react-query": "^5.17.19",
         "axios": "^1.6.5",
+        "html2canvas": "^1.4.1",
         "i18next": "^25.8.13",
+        "jspdf": "^4.2.1",
         "lucide-react": "^0.312.0",
         "react": "^18.2.0",
         "react-dom": "^18.2.0",

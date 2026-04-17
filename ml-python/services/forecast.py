@@ -1,9 +1,4 @@
-"""
-Open-Meteo forecast service for Almaty.
 
-Provides a cached 7-day weather and air-quality forecast that can be reused by
-the planner and analytics endpoints.
-"""
 
 import asyncio
 import logging
@@ -22,7 +17,6 @@ AQI_FORECAST_URL = "https://air-quality-api.open-meteo.com/v1/air-quality"
 
 
 class ForecastService:
-    """Fetches weather and AQI forecast data from Open-Meteo."""
 
     CACHE_TTL = 3600  # 1 hour
     FORECAST_DAYS = 7
@@ -43,7 +37,6 @@ class ForecastService:
             await self._client.aclose()
 
     async def get_forecast(self) -> Optional[Dict[str, Any]]:
-        """Return cached 7-day forecast data or refresh it on demand."""
         if self._cache and (time.time() - self._cache_time) < self.CACHE_TTL:
             return self._cache
 
