@@ -1,10 +1,4 @@
-"""
-Smart City AI Core — ML Service v2.0
-FastAPI application with:
-- Real ML models (GradientBoosting + RandomForest) trained on 2234 days
-- Open-Meteo 3-day forecast integration
-- Enhanced Groq LLM with live data context
-"""
+
 
 import asyncio
 from contextlib import asynccontextmanager
@@ -17,28 +11,22 @@ import logging
 
 from services.logic import PredictionService
 
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize prediction service (trains ML models on startup)
 prediction_service = PredictionService()
 
-# Concurrency guard for model retraining
 _retrain_lock = asyncio.Lock()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Manage application lifespan: startup and shutdown."""
-    # Startup: nothing extra needed (PredictionService already initialized)
     yield
-    # Shutdown: close HTTP client
     await prediction_service.forecast_service.close()
     logger.info("Forecast HTTP client closed")
 
 
-# Initialize FastAPI app
+
 app = FastAPI(
     title="SmartCity ML Service",
     description="AI-powered predictions with real ML models for Almaty urban monitoring",
@@ -46,7 +34,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS middleware — restricted to known origins
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -62,12 +50,11 @@ app.add_middleware(
 
 
 class PredictionRequest(BaseModel):
-    """Request model for predictions — now accepts live data from backend."""
     date: Optional[str] = None
     temperature: Optional[float] = None
     query: Optional[str] = None
     language: Optional[str] = None
-    # Live data fields (sent by Go backend)
+
     live_aqi: Optional[int] = None
     live_traffic: Optional[float] = None
     live_temp: Optional[float] = None
@@ -111,7 +98,6 @@ class PredictionRequest(BaseModel):
 
 
 class PredictionResponse(BaseModel):
-    """Response model for predictions"""
     prediction: str
     confidence_score: float
     aqi_prediction: int
@@ -122,7 +108,6 @@ class PredictionResponse(BaseModel):
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint with ML model status."""
     ml_info = prediction_service.ml_model.get_info()
     return {
         "status": "ok",
@@ -135,17 +120,8 @@ async def health_check():
 
 @app.post("/predict", response_model=PredictionResponse)
 async def predict(request: PredictionRequest):
-    """
-    Generate AI prediction for Almaty urban conditions.
-
-    Enhanced with:
-    - Real ML models (GradientBoosting + RandomForest)
-    - Open-Meteo 3-day forecast
-    - Live data context (AQI/traffic from Go backend)
-    - Adaptive Groq LLM prompt
-    """
     try:
-        # Sanitize log output to prevent log injection
+
         safe_date = (request.date or '').replace('\n', '').replace('\r', '')[:20]
         safe_lang = (request.language or '').replace('\n', '').replace('\r', '')[:5]
         logger.info(
@@ -169,7 +145,6 @@ async def predict(request: PredictionRequest):
 
 @app.get("/stats")
 async def get_stats():
-    """Get historical data statistics + ML model metrics."""
     try:
         stats = prediction_service.get_data_stats()
         return {"success": True, "data": stats}
@@ -180,7 +155,6 @@ async def get_stats():
 
 @app.post("/analytics")
 async def get_analytics(request: PredictionRequest):
-    """Get analytics payload built from historical CSV data and forecast-driven predictions."""
     try:
         data = await prediction_service.get_analytics_data(
             live_aqi=request.live_aqi,
@@ -195,7 +169,6 @@ async def get_analytics(request: PredictionRequest):
 
 @app.get("/model/info")
 async def model_info():
-    """Get ML model training metrics, feature importance, and status."""
     try:
         info = prediction_service.ml_model.get_info()
         return {"success": True, "data": info}
@@ -206,7 +179,6 @@ async def model_info():
 
 @app.post("/model/retrain")
 async def retrain_model():
-    """Re-train ML models from CSV data. Useful after data updates."""
     if _retrain_lock.locked():
         raise HTTPException(status_code=409, detail="Retraining already in progress")
     try:

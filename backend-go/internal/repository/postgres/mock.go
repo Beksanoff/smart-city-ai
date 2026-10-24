@@ -7,25 +7,20 @@ import (
 	"github.com/smartcity/backend/internal/domain"
 )
 
-// MockRepository implements domain.DataRepository for testing/demo mode
 type MockRepository struct{}
 
-// NewMockRepository creates a new mock repository
 func NewMockRepository() *MockRepository {
 	return &MockRepository{}
 }
 
-// SaveWeatherData is a no-op in mock mode
 func (r *MockRepository) SaveWeatherData(ctx context.Context, data domain.Weather) error {
 	return nil
 }
 
-// SaveTrafficData is a no-op in mock mode
 func (r *MockRepository) SaveTrafficData(ctx context.Context, data domain.Traffic) error {
 	return nil
 }
 
-// GetHistoricalWeather returns mock historical data
 func (r *MockRepository) GetHistoricalWeather(ctx context.Context, from, to time.Time) ([]domain.Weather, error) {
 	return []domain.Weather{
 		{
@@ -46,7 +41,6 @@ func (r *MockRepository) GetHistoricalWeather(ctx context.Context, from, to time
 	}, nil
 }
 
-// GetHistoricalTraffic returns mock historical data
 func (r *MockRepository) GetHistoricalTraffic(ctx context.Context, from, to time.Time) ([]domain.Traffic, error) {
 	return []domain.Traffic{
 		{
@@ -61,12 +55,10 @@ func (r *MockRepository) GetHistoricalTraffic(ctx context.Context, from, to time
 	}, nil
 }
 
-// Health always returns nil in mock mode
 func (r *MockRepository) Health(ctx context.Context) error {
 	return nil
 }
 
-// SavePredictionLog is a no-op in mock mode
 func (r *MockRepository) SavePredictionLog(ctx context.Context, req domain.PredictionRequest, resp domain.PredictionResponse) error {
 	return nil
 }

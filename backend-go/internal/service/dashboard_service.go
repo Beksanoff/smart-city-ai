@@ -11,20 +11,18 @@ import (
 	"github.com/smartcity/backend/internal/domain"
 )
 
-// DashboardService aggregates all live data
 type DashboardService struct {
 	weatherSvc *WeatherService
 	trafficSvc *TrafficService
 	repo       DataRepository
 
-	wgBg sync.WaitGroup // tracks background goroutines for graceful shutdown
+	wgBg sync.WaitGroup
 
-	// Deduplication: write to DB at most once per minute
+	// DB write throttle: max once per minute
 	lastWriteMu sync.Mutex
 	lastWriteAt time.Time
 }
 
-// NewDashboardService creates a new dashboard service
 func NewDashboardService(
 	weatherSvc *WeatherService,
 	trafficSvc *TrafficService,
@@ -37,13 +35,10 @@ func NewDashboardService(
 	}
 }
 
-// WaitBackground blocks until all background save goroutines complete.
-// Call during graceful shutdown to avoid dropped writes.
 func (s *DashboardService) WaitBackground() {
 	s.wgBg.Wait()
 }
 
-// TrackBackground runs fn in a tracked goroutine that WaitBackground will wait for.
 func (s *DashboardService) TrackBackground(fn func()) {
 	s.wgBg.Add(1)
 	go func() {
@@ -52,7 +47,6 @@ func (s *DashboardService) TrackBackground(fn func()) {
 	}()
 }
 
-// GetDashboardData fetches all live data concurrently using goroutines
 func (s *DashboardService) GetDashboardData(ctx context.Context) (domain.DashboardData, error) {
 	var (
 		weather domain.Weather
@@ -62,7 +56,7 @@ func (s *DashboardService) GetDashboardData(ctx context.Context) (domain.Dashboa
 		errs    []error
 	)
 
-	// Fetch weather concurrently
+
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -76,7 +70,7 @@ func (s *DashboardService) GetDashboardData(ctx context.Context) (domain.Dashboa
 		mu.Unlock()
 	}()
 
-	// Fetch traffic concurrently
+
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -92,13 +86,12 @@ func (s *DashboardService) GetDashboardData(ctx context.Context) (domain.Dashboa
 
 	wg.Wait()
 
-	// Log any errors that occurred
+
 	for _, err := range errs {
 		log.Printf("Dashboard data fetch error: %v", err)
 	}
 
-	// Persist data to database asynchronously (tracked for graceful shutdown),
-	// but at most once per minute to avoid excessive DB writes.
+	// Async DB persist (throttled to once per minute)
 	s.lastWriteMu.Lock()
 	shouldWrite := time.Since(s.lastWriteAt) >= time.Minute
 	if shouldWrite {
@@ -125,7 +118,7 @@ func (s *DashboardService) GetDashboardData(ctx context.Context) (domain.Dashboa
 		}()
 	}
 
-	// Build combined error if any fetch failed
+
 	var retErr error
 	if len(errs) > 0 {
 		msgs := make([]string, len(errs))
@@ -135,7 +128,7 @@ func (s *DashboardService) GetDashboardData(ctx context.Context) (domain.Dashboa
 		retErr = fmt.Errorf("dashboard fetch errors: %s", strings.Join(msgs, "; "))
 	}
 
-	// Even with errors, return what we have
+
 	return domain.DashboardData{
 		Weather:   weather,
 		Traffic:   traffic,
@@ -143,12 +136,10 @@ func (s *DashboardService) GetDashboardData(ctx context.Context) (domain.Dashboa
 	}, retErr
 }
 
-// GetWeather returns current weather
 func (s *DashboardService) GetWeather(ctx context.Context) (domain.Weather, error) {
 	return s.weatherSvc.GetCurrentWeather(ctx)
 }
 
-// GetTraffic returns current traffic
 func (s *DashboardService) GetTraffic(ctx context.Context) (domain.Traffic, error) {
 	return s.trafficSvc.GetCurrentTraffic(ctx)
 }

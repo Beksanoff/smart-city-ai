@@ -4,9 +4,8 @@ import (
 	"math"
 )
 
-// Haversine calculates distance between two points in kilometers
 func Haversine(lat1, lon1, lat2, lon2 float64) float64 {
-	const R = 6371 // Earth radius in km
+	const R = 6371
 
 	lat1Rad := lat1 * math.Pi / 180
 	lat2Rad := lat2 * math.Pi / 180
@@ -21,7 +20,6 @@ func Haversine(lat1, lon1, lat2, lon2 float64) float64 {
 	return R * c
 }
 
-// Clamp limits a value between min and max
 func Clamp(value, min, max float64) float64 {
 	if value < min {
 		return min
@@ -32,13 +30,11 @@ func Clamp(value, min, max float64) float64 {
 	return value
 }
 
-// RoundTo rounds a float to specified decimal places
 func RoundTo(value float64, places int) float64 {
 	factor := math.Pow(10, float64(places))
 	return math.Round(value*factor) / factor
 }
 
-// Lerp performs linear interpolation between two values
 func Lerp(a, b, t float64) float64 {
 	return a + t*(b-a)
 }

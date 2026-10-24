@@ -2,7 +2,6 @@ package domain
 
 import "time"
 
-// Weather represents weather data for a location
 type Weather struct {
 	Temperature float64   `json:"temperature"`
 	FeelsLike   float64   `json:"feels_like"`
@@ -19,7 +18,6 @@ type Weather struct {
 	IsMock      bool      `json:"is_mock"`
 }
 
-// WeatherResponse wraps weather data with metadata
 type WeatherResponse struct {
 	Data    Weather `json:"data"`
 	Success bool    `json:"success"`

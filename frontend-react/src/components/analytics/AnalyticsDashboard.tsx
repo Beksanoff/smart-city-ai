@@ -5,6 +5,7 @@ import { api } from '../../services/api'
 import AQIHistoryChart from './AQIHistoryChart'
 import TrafficByHourChart from './TrafficByHourChart'
 import CorrelationChart from './CorrelationChart'
+import HourlyTrafficPatternChart from './HourlyTrafficPatternChart'
 
 export default function AnalyticsDashboard() {
     const { t } = useTranslation()
@@ -14,9 +15,16 @@ export default function AnalyticsDashboard() {
         refetchInterval: 15 * 60_000,
         staleTime: 5 * 60_000,
     })
+    const { data: statsData, isLoading: isStatsLoading } = useQuery({
+        queryKey: ['stats-hourly-patterns'],
+        queryFn: api.getStats,
+        refetchInterval: 10 * 60_000,
+        staleTime: 5 * 60_000,
+    })
 
     const forecastDays = data?.forecast_days ?? []
     const monthlyOverview = data?.monthly_overview ?? []
+    const hourlyPatterns = statsData?.data?.hourly_patterns ?? null
 
     return (
         <div className="space-y-6">
@@ -59,6 +67,10 @@ export default function AnalyticsDashboard() {
                         {t('analytics.footnoteCorrelation')}
                     </p>
                 </div>
+            </div>
+
+            <div className="space-y-2 min-w-0">
+                <HourlyTrafficPatternChart hourlyPatterns={hourlyPatterns} isLoading={isStatsLoading} />
             </div>
         </div>
     )

@@ -13,29 +13,23 @@ import (
 	"github.com/smartcity/backend/internal/domain"
 )
 
-// WeatherService fetches weather + AQI from Open-Meteo (free, no API key).
-// Replaces OpenWeatherMap to avoid rate limits (1,000/day).
-// Open-Meteo allows 10,000+ requests/day, no key needed.
 type WeatherService struct {
 	httpClient *http.Client
 
-	// Cache to avoid excessive API calls
 	mu          sync.RWMutex
 	cachedData  *domain.Weather
 	cacheExpiry time.Time
 	cacheTTL    time.Duration
 }
 
-// NewWeatherService creates a weather service using Open-Meteo.
-// No API key needed — Open-Meteo is free and keyless.
 func NewWeatherService(_ string) *WeatherService {
 	return &WeatherService{
 		httpClient: &http.Client{Timeout: 10 * time.Second},
-		cacheTTL:   5 * time.Minute, // Cache 5 min (Open-Meteo updates every 15 min)
+		cacheTTL:   5 * time.Minute,
 	}
 }
 
-// --- Open-Meteo response structs ---
+
 
 type OpenMeteoCurrentResponse struct {
 	Current struct {
@@ -58,9 +52,7 @@ type OpenMeteoAirQualityResponse struct {
 	} `json:"current"`
 }
 
-// GetCurrentWeather fetches live weather + AQI from Open-Meteo
 func (s *WeatherService) GetCurrentWeather(ctx context.Context) (domain.Weather, error) {
-	// Check cache first (read lock)
 	s.mu.RLock()
 	if s.cachedData != nil && time.Now().Before(s.cacheExpiry) {
 		cached := *s.cachedData
@@ -69,25 +61,21 @@ func (s *WeatherService) GetCurrentWeather(ctx context.Context) (domain.Weather,
 	}
 	s.mu.RUnlock()
 
-	// Upgrade to write lock, double-check to avoid thundering herd
+	// Double-check under write lock (thundering herd prevention)
 	s.mu.Lock()
 	if s.cachedData != nil && time.Now().Before(s.cacheExpiry) {
 		cached := *s.cachedData
 		s.mu.Unlock()
 		return cached, nil
 	}
-	// Hold lock during fetch — only one goroutine fetches; others wait
-	// and will hit the cache on next RLock check. Blocks ≤10s once per 5 min.
 	defer s.mu.Unlock()
 
-	// Fetch weather from Open-Meteo
 	weather, err := s.fetchOpenMeteoWeather(ctx)
 	if err != nil {
 		log.Printf("Open-Meteo weather error, using fallback: %v", err)
 		return s.getMockWeather(), nil
 	}
 
-	// Fetch AQI from Open-Meteo Air Quality
 	if aqi, err := s.fetchOpenMeteoAQI(ctx); err == nil {
 		weather.AQI = aqi
 	} else {
@@ -95,7 +83,7 @@ func (s *WeatherService) GetCurrentWeather(ctx context.Context) (domain.Weather,
 		weather.AQI = s.estimateAQI(weather.Temperature)
 	}
 
-	// Cache result (still under write lock)
+
 	s.cachedData = &weather
 	s.cacheExpiry = time.Now().Add(s.cacheTTL)
 
@@ -105,7 +93,6 @@ func (s *WeatherService) GetCurrentWeather(ctx context.Context) (domain.Weather,
 	return weather, nil
 }
 
-// fetchOpenMeteoWeather queries Open-Meteo Forecast API for current conditions
 func (s *WeatherService) fetchOpenMeteoWeather(ctx context.Context) (domain.Weather, error) {
 	url := fmt.Sprintf(
 		"https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,surface_pressure,visibility&timezone=Asia%%2FAlmaty",
@@ -133,7 +120,6 @@ func (s *WeatherService) fetchOpenMeteoWeather(ctx context.Context) (domain.Weat
 	}
 
 	c := omResp.Current
-	// Determine local hour for day/night icon selection
 	loc, locErr := time.LoadLocation("Asia/Almaty")
 	if locErr != nil {
 		loc = time.FixedZone("Asia/Almaty", 5*3600)
@@ -141,7 +127,7 @@ func (s *WeatherService) fetchOpenMeteoWeather(ctx context.Context) (domain.Weat
 	localHour := time.Now().In(loc).Hour()
 	description, icon := wmoToDescription(c.WeatherCode, localHour)
 
-	// Use real visibility from API; fall back to 10 km if zero/missing
+
 	visibility := int(c.Visibility)
 	if visibility <= 0 {
 		visibility = 10000
@@ -153,7 +139,7 @@ func (s *WeatherService) fetchOpenMeteoWeather(ctx context.Context) (domain.Weat
 		Humidity:    c.RelativeHumidity2m,
 		Description: description,
 		Icon:        icon,
-		WindSpeed:   math.Round(c.WindSpeed10m/3.6*10) / 10, // km/h → m/s
+		WindSpeed:   math.Round(c.WindSpeed10m/3.6*10) / 10,
 		Visibility:  visibility,
 		Pressure:    int(math.Round(c.SurfacePressure)),
 		City:        "Almaty",
@@ -163,7 +149,6 @@ func (s *WeatherService) fetchOpenMeteoWeather(ctx context.Context) (domain.Weat
 	}, nil
 }
 
-// fetchOpenMeteoAQI queries Open-Meteo Air Quality API
 func (s *WeatherService) fetchOpenMeteoAQI(ctx context.Context) (int, error) {
 	url := fmt.Sprintf(
 		"https://air-quality-api.open-meteo.com/v1/air-quality?latitude=%.4f&longitude=%.4f&current=pm2_5,pm10&timezone=Asia%%2FAlmaty",
@@ -200,8 +185,7 @@ func (s *WeatherService) fetchOpenMeteoAQI(ctx context.Context) (int, error) {
 	return aqi, nil
 }
 
-// wmoToDescription converts WMO weather code to description + icon.
-// hour is used to select day ("d") or night ("n") icon variants.
+// WMO weather code -> description + OWM-style icon
 func wmoToDescription(code int, hour int) (string, string) {
 	suffix := "d"
 	if hour < 6 || hour >= 21 {
@@ -234,12 +218,8 @@ func wmoToDescription(code int, hour int) (string, string) {
 	}
 }
 
-// pm25ToAQI converts PM2.5 concentration (μg/m³) to US EPA AQI (0-500).
-// Uses the February 2024 revised breakpoints (88 FR 5558).
-// Key change: "Good" category lowered from 12.0 to 9.0 µg/m³,
-// "Very Unhealthy" ceiling lowered from 150.4 to 125.4 µg/m³.
+// PM2.5 -> US EPA AQI (2024 revised breakpoints, 88 FR 5558)
 func pm25ToAQI(pm25 float64) int {
-	// Truncate to 1 decimal place to avoid falling through the 9.0–9.1 gap
 	pm25 = math.Floor(pm25*10) / 10
 
 	type bp struct {
@@ -269,7 +249,6 @@ func pm25ToAQI(pm25 float64) int {
 	return 0
 }
 
-// estimateAQI provides a rough AQI estimate when Air Pollution API is unavailable
 func (s *WeatherService) estimateAQI(temp float64) int {
 	month := time.Now().Month()
 	isWinter := month == 12 || month == 1 || month == 2
@@ -284,7 +263,6 @@ func (s *WeatherService) estimateAQI(temp float64) int {
 	return 80
 }
 
-// getMockWeather returns simulated Almaty weather
 func (s *WeatherService) getMockWeather() domain.Weather {
 	month := time.Now().Month()
 	var temp, feelsLike float64

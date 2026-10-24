@@ -152,3 +152,15 @@ body {
     @apply p-4;
   }
 }
+
+/* Custom animations used in Tailwind classes */
+@keyframes slide-down {
+  0% { transform: translateY(-100%); opacity: 0; }
+  20% { opacity: 1; }
+  80% { opacity: 1; }
+  100% { transform: translateY(800%); opacity: 0; }
+}
+
+.monitor-scanline {
+  animation: slide-down 3s linear infinite;
+}
